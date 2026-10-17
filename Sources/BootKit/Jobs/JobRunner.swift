@@ -13,6 +13,11 @@ public enum JobRunner {
         var errorText: String?
         do {
             logInfo("RufusAdvanced \(BootKit.version) — job started (\(spec.operation.rawValue))")
+            logDebug("Helper pid \(getpid()), uid \(getuid()), euid \(geteuid()), macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
+            logDebug("Executable: \(CommandLine.arguments.first ?? "?")")
+            if let w = AppLocation.warning { logWarning(w) }
+            logDebug("Job: disk \(spec.disk) (\(Units.human(spec.diskSize)), \(spec.diskMediaName)), boot \(spec.bootSelection.rawValue), mode \(spec.writeMode.rawValue), scheme \(spec.partitionScheme.rawValue), target \(spec.targetSystem.rawValue), fs \(spec.fileSystem.rawValue), cluster \(spec.clusterSize == 0 ? "default" : String(spec.clusterSize)), quick format \(spec.quickFormat), label '\(spec.label)'")
+            if let img = spec.imagePath { logDebug("Image: \(img)") }
             let ctx = try JobContext(spec: spec, reporter: reporter, cancel: cancel)
             logInfo("Target: \(ctx.disk.displayName) — \(ctx.disk.subtitle)")
             try runChecked(ctx)

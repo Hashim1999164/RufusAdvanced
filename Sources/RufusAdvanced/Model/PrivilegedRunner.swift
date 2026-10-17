@@ -20,6 +20,9 @@ final class PrivilegedRunner: @unchecked Sendable {
     private let jobDir: String
     private let eventsPath: String
     private let cancelPath: String
+    private let outputPath: String
+    private var outputOffset: UInt64 = 0
+    private var outputBuffer = Data()
     private var offset: UInt64 = 0
     private var buffer = Data()
     private var timer: DispatchSourceTimer?
@@ -34,6 +37,7 @@ final class PrivilegedRunner: @unchecked Sendable {
         jobDir = base + "/" + UUID().uuidString
         eventsPath = jobDir + "/events.jsonl"
         cancelPath = jobDir + "/cancel"
+        outputPath = jobDir + "/helper-output.log"
         self.onEvent = onEvent
     }
 
@@ -53,6 +57,8 @@ final class PrivilegedRunner: @unchecked Sendable {
         guard fm.createFile(atPath: eventsPath, contents: nil, attributes: [.posixPermissions: 0o600]) else {
             throw RunError.launchFailed("cannot create \(eventsPath)")
         }
+        // The helper's own stdout/stderr (crash messages, dyld errors…) go to a file we tail into the log.
+        fm.createFile(atPath: outputPath, contents: nil, attributes: [.posixPermissions: 0o600])
         let job = try spec.encoded()
         let args = ["run", "--job", job, "--events", eventsPath, "--cancel", cancelPath]
 
@@ -61,8 +67,10 @@ final class PrivilegedRunner: @unchecked Sendable {
         // only macOS installers (installer / createinstallmedia) need a root helper.
         let needsAdmin = spec.operation == .write
             && (spec.bootSelection == .macInstaller || spec.writeMode == .createInstallMedia || spec.writeMode == .asrRestore)
+        logDebug("Launching helper \(helper) as \(needsAdmin ? "root (administrator prompt)" : "the current user (uid \(getuid()))"): run --job <\(job.count) bytes> --events \(eventsPath)")
+        if let w = AppLocation.warning { logWarning(w) }
         if needsAdmin {
-            let command = ([helper] + args).map(shellQuote).joined(separator: " ") + " > /dev/null 2>&1 &"
+            let command = ([helper] + args).map(shellQuote).joined(separator: " ") + " > \(shellQuote(outputPath)) 2>&1 &"
             let script = "do shell script \"\(appleScriptEscape(command))\" with administrator privileges with prompt \"RufusAdvanced needs administrator rights to write to the drive \(spec.diskMediaName) (\(spec.disk)).\""
             let osa = Process()
             osa.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
@@ -72,6 +80,7 @@ final class PrivilegedRunner: @unchecked Sendable {
             osa.standardOutput = Pipe()
             try osa.run()
             osa.waitUntilExit()
+            logDebug("osascript (administrator prompt) exited with status \(osa.terminationStatus)")
             if osa.terminationStatus != 0 {
                 let msg = String(decoding: err.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
                 if msg.contains("-128") || msg.lowercased().contains("cancel") { throw RunError.authorizationCancelled }
@@ -81,9 +90,15 @@ final class PrivilegedRunner: @unchecked Sendable {
             let p = Process()
             p.executableURL = URL(fileURLWithPath: helper)
             p.arguments = args
-            p.standardOutput = FileHandle.nullDevice
-            p.standardError = FileHandle.nullDevice
+            let outFile = FileHandle(forWritingAtPath: outputPath)
+            let out = outFile ?? FileHandle.nullDevice
+            p.standardOutput = out
+            p.standardError = out
+            p.terminationHandler = { proc in
+                logDebug("Helper process \(proc.processIdentifier) exited with status \(proc.terminationStatus) (\(proc.terminationReason == .uncaughtSignal ? "signal" : "exit"))")
+            }
             try p.run()
+            try? outFile?.close()
             directProcess = p
             helperPID = p.processIdentifier
         }
@@ -109,7 +124,32 @@ final class PrivilegedRunner: @unchecked Sendable {
         t.resume()
     }
 
+    /// Forward new lines of the helper's stdout/stderr into the log.
+    private func drainOutput() {
+        guard let fh = FileHandle(forReadingAtPath: outputPath) else { return }
+        defer { try? fh.close() }
+        try? fh.seek(toOffset: outputOffset)
+        let data = (try? fh.readToEnd()) ?? Data()
+        guard !data.isEmpty else { return }
+        outputOffset += UInt64(data.count)
+        outputBuffer.append(data)
+        var lines: [String] = []
+        while let nl = outputBuffer.firstIndex(of: 0x0A) {
+            lines.append(String(decoding: outputBuffer[outputBuffer.startIndex..<nl], as: UTF8.self))
+            outputBuffer.removeSubrange(outputBuffer.startIndex...nl)
+        }
+        if finished, !outputBuffer.isEmpty {
+            lines.append(String(decoding: outputBuffer, as: UTF8.self))
+            outputBuffer.removeAll()
+        }
+        let entries = lines.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+            .map { LogEntry(level: .debug, message: "[helper output] \($0)") }
+        guard !entries.isEmpty else { return }
+        DispatchQueue.main.async { for e in entries { self.onEvent(.log(e)) } }
+    }
+
     private func poll() {
+        drainOutput()
         guard !finished, let fh = FileHandle(forReadingAtPath: eventsPath) else { return }
         defer { try? fh.close() }
         try? fh.seek(toOffset: offset)
@@ -147,6 +187,7 @@ final class PrivilegedRunner: @unchecked Sendable {
 
     private func finish() {
         finished = true
+        drainOutput()
         timer?.cancel()
         timer = nil
         let dir = jobDir

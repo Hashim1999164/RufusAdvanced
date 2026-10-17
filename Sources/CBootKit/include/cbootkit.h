@@ -9,7 +9,9 @@
 ///
 /// - extauth: optional 32 byte AuthorizationExternalForm (pre-authorized rights, so no prompt);
 ///            NULL lets authopen show its own authorization dialog.
-/// Returns the file descriptor, or -1 with a message in `err`.
-int cbk_authopen(const char *path, int oflags, const void *extauth, size_t extauth_len, char *err, size_t errlen);
+/// Returns the file descriptor, or -1 with a message in `err`. `out_status` (may be NULL) receives
+/// authopen's exit status (an errno value such as EPERM / EACCES / EBUSY, 0 if it never ran or
+/// exited without passing a descriptor, -1 if it was killed by a signal).
+int cbk_authopen(const char *path, int oflags, const void *extauth, size_t extauth_len, char *err, size_t errlen, int *out_status);
 
 #endif

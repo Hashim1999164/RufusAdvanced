@@ -9,7 +9,8 @@
 
 extern char **environ;
 
-int cbk_authopen(const char *path, int oflags, const void *extauth, size_t extauth_len, char *err, size_t errlen) {
+int cbk_authopen(const char *path, int oflags, const void *extauth, size_t extauth_len, char *err, size_t errlen, int *out_status) {
+    if (out_status != NULL) *out_status = 0;
     int sv[2] = { -1, -1 }, in[2] = { -1, -1 };
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, sv) != 0) {
         snprintf(err, errlen, "socketpair: %s", strerror(errno));
@@ -45,7 +46,8 @@ int cbk_authopen(const char *path, int oflags, const void *extauth, size_t extau
     close(sv[1]);
     if (extauth != NULL) close(in[0]);
     if (rc != 0) {
-        snprintf(err, errlen, "cannot run authopen: %s", strerror(rc));
+        snprintf(err, errlen, "cannot run /usr/libexec/authopen: %s", strerror(rc));
+        if (out_status != NULL) *out_status = rc;
         close(sv[0]);
         if (extauth != NULL) close(in[1]);
         return -1;
@@ -85,10 +87,12 @@ int cbk_authopen(const char *path, int oflags, const void *extauth, size_t extau
     close(sv[0]);
     int status = 0;
     while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+    int exitcode = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    if (out_status != NULL) *out_status = exitcode;
     if (fd < 0) {
-        int code = WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+        int code = exitcode;
         if (code == 0) code = EPERM;
-        snprintf(err, errlen, "authopen could not open %s (%s)", path, code > 0 ? strerror(code) : "authorization failed or cancelled");
+        snprintf(err, errlen, "authopen could not open %s (%s)", path, code > 0 ? strerror(code) : "authopen was terminated");
         return -1;
     }
     return fd;

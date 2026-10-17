@@ -18,18 +18,83 @@ public struct LogEntry: Codable, Sendable, Identifiable {
         self.message = message
     }
 
-    public var formatted: String {
+    private static let timeFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.dateFormat = "HH:mm:ss"
-        let prefix: String
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "HH:mm:ss.SSS"
+        return f
+    }()
+
+    private static let fileFormatter: DateFormatter = {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyy-MM-dd HH:mm:ss.SSS ZZZZZ"
+        return f
+    }()
+
+    private var prefix: String {
         switch level {
-        case .debug: prefix = "  "
-        case .info: prefix = ""
-        case .notice: prefix = "• "
-        case .warning: prefix = "WARNING: "
-        case .error: prefix = "ERROR: "
+        case .debug: return "  "
+        case .info: return ""
+        case .notice: return "• "
+        case .warning: return "WARNING: "
+        case .error: return "ERROR: "
         }
-        return "[\(f.string(from: date))] \(prefix)\(message)"
+    }
+
+    /// "[21:34:05.123] message" — used by the log views, Copy and Save.
+    public var formatted: String {
+        "[\(LogEntry.timeFormatter.string(from: date))] \(prefix)\(message)"
+    }
+
+    /// Full date, time zone and level — used for the persistent log file.
+    public var fileLine: String {
+        let lvl = level.rawValue.uppercased().padding(toLength: 7, withPad: " ", startingAt: 0)
+        return "\(LogEntry.fileFormatter.string(from: date)) \(lvl) \(message)"
+    }
+}
+
+/// Persistent log in ~/Library/Logs/RufusAdvanced (one file per app launch, old files pruned).
+public final class LogFile: @unchecked Sendable {
+    public static var directory: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/RufusAdvanced", isDirectory: true)
+    }
+
+    public let url: URL
+    private let handle: FileHandle?
+    private let queue = DispatchQueue(label: "rufusadvanced.logfile")
+
+    public init(prefix: String = "RufusAdvanced", keep: Int = 20) {
+        let fm = FileManager.default
+        let dir = LogFile.directory
+        try? fm.createDirectory(at: dir, withIntermediateDirectories: true)
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyyMMdd-HHmmss"
+        url = dir.appendingPathComponent("\(prefix)-\(f.string(from: Date())).log")
+        fm.createFile(atPath: url.path, contents: nil)
+        handle = try? FileHandle(forWritingTo: url)
+        _ = try? handle?.seekToEnd()
+        // Keep only the most recent files.
+        if let files = try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)
+            .filter({ $0.pathExtension == "log" && $0.lastPathComponent.hasPrefix(prefix + "-") })
+            .sorted(by: { $0.lastPathComponent > $1.lastPathComponent }), files.count > keep {
+            for old in files.dropFirst(keep) { try? fm.removeItem(at: old) }
+        }
+    }
+
+    deinit { try? handle?.close() }
+
+    public func write(_ entry: LogEntry) {
+        let line = entry.fileLine + "\n"
+        queue.async { [handle] in
+            try? handle?.write(contentsOf: Data(line.utf8))
+        }
+    }
+
+    /// Wait until everything queued so far has been written.
+    public func flush() {
+        queue.sync { try? handle?.synchronize() }
     }
 }
 

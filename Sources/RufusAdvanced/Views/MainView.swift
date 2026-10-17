@@ -13,6 +13,9 @@ struct MainView: View {
             if let v = model.updateAvailable {
                 UpdateBanner(version: v)
             }
+            if let w = AppLocation.warning {
+                LocationBanner(message: w)
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     DriveSection()
@@ -27,6 +30,8 @@ struct MainView: View {
                 .padding(18)
                 .disabled(model.isBusy)
             }
+            Divider()
+            LogPane()
             Divider()
             StatusBar()
         }

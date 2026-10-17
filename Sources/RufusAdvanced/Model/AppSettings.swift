@@ -25,6 +25,7 @@ final class AppSettings: ObservableObject {
     @AppStorage("lastUpdateCheck") var lastUpdateCheck: Double = 0
     @AppStorage("windowsCustomization") var windowsCustomizationData: Data = Data()
     @AppStorage("verboseLog") var verboseLog = false
+    @AppStorage("showLogPane") var showLogPane = false
 
     var windowsCustomization: WindowsCustomization {
         get { (try? JSONDecoder().decode(WindowsCustomization.self, from: windowsCustomizationData)) ?? WindowsCustomization() }

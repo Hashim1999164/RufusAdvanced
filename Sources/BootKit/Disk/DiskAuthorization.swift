@@ -45,14 +45,17 @@ public final class DiskAuthorization: @unchecked Sendable {
     public func authorize(disk: String) throws {
         lock.lock(); defer { lock.unlock() }
         if authorizedDisks.contains(disk) { return }
+        logDebug("Authorization: requesting sys.openfile rights for /dev/\(disk), /dev/r\(disk) and partitions s1–s8 (uid \(getuid()), euid \(geteuid()))")
+        if let w = AppLocation.warning { logWarning(w) }
         if authRef == nil {
             var ref: AuthorizationRef?
             let st = AuthorizationCreate(nil, nil, [], &ref)
+            logDebug("AuthorizationCreate → \(st)")
             guard st == errAuthorizationSuccess, let ref else {
                 if st == errAuthorizationInternal {
-                    throw BootKitError.generic("macOS could not authorize disk access. Move RufusAdvanced to the Applications folder (apps run from Desktop, Documents or Downloads can't be authorized) and try again.")
+                    throw BootKitError.permissionDenied(path: "/dev/r\(disk)", errno: EPERM, detail: "AuthorizationCreate failed (\(st))")
                 }
-                throw BootKitError.generic("Could not create an authorization (\(st)).")
+                throw BootKitError.generic("Could not create an authorization (OSStatus \(st)).")
             }
             authRef = ref
         }
@@ -68,6 +71,7 @@ public final class DiskAuthorization: @unchecked Sendable {
         if FileManager.default.fileExists(atPath: iconPath) {
             envItems.append(AuthorizationItem(name: kAuthorizationEnvironmentIcon, valueLength: strlen(iconC), value: iconC, flags: 0))
         }
+        logInfo("Asking for permission to write to \(disk) (password dialog)…")
         let status: OSStatus = items.withUnsafeMutableBufferPointer { ib in
             envItems.withUnsafeMutableBufferPointer { eb in
                 var rights = AuthorizationRights(count: UInt32(ib.count), items: ib.baseAddress)
@@ -75,16 +79,18 @@ public final class DiskAuthorization: @unchecked Sendable {
                 return AuthorizationCopyRights(authRef!, &rights, &env, [.interactionAllowed, .extendRights, .preAuthorize], nil)
             }
         }
+        logDebug("AuthorizationCopyRights(\(names.count) rights) → OSStatus \(status)")
         switch status {
         case errAuthorizationSuccess:
             authorizedDisks.insert(disk)
             logInfo("Access to \(disk) authorized")
         case errAuthorizationCanceled:
             throw BootKitError.cancelled
-        case errAuthorizationDenied:
-            throw BootKitError.generic("Access to \(disk) was denied. An administrator account is required to write to drives.")
+        case errAuthorizationDenied, errAuthorizationInteractionNotAllowed, errAuthorizationInternal:
+            throw BootKitError.permissionDenied(path: "/dev/r\(disk)", errno: EPERM,
+                                                detail: "authorization \(status == errAuthorizationDenied ? "denied" : "failed") (OSStatus \(status))")
         default:
-            throw BootKitError.generic("Authorization for \(disk) failed (\(status)).")
+            throw BootKitError.generic("Authorization for \(disk) failed (OSStatus \(status)).")
         }
     }
 
@@ -96,13 +102,25 @@ public final class DiskAuthorization: @unchecked Sendable {
         var ext = AuthorizationExternalForm()
         let st = authRef.map { AuthorizationMakeExternalForm($0, &ext) } ?? errAuthorizationInvalidRef
         lock.unlock()
-        guard st == errAuthorizationSuccess else { throw BootKitError.generic("Authorization export failed (\(st)).") }
+        guard st == errAuthorizationSuccess else { throw BootKitError.generic("Authorization export failed (OSStatus \(st)).") }
         var err = [CChar](repeating: 0, count: 512)
-        let fd = withUnsafeBytes(of: &ext) { raw in
-            cbk_authopen(path, flags, raw.baseAddress, raw.count, &err, err.count)
+        var exitStatus: Int32 = 0
+        let mode = (flags & O_ACCMODE) == O_RDONLY ? "read-only" : "read/write"
+        logDebug("$ /usr/libexec/authopen -stdoutpipe -extauth -o \(flags) \(path)   (\(mode))")
+        let fd: Int32 = withUnsafeBytes(of: &ext) { raw in
+            cbk_authopen(path, flags, raw.baseAddress, raw.count, &err, err.count, &exitStatus)
         }
+        logDebug("authopen exit status \(exitStatus)\(exitStatus > 0 ? " (\(String(cString: strerror(exitStatus))))" : ""), fd \(fd)")
         if fd < 0 {
-            throw BootKitError.generic(String(cString: err))
+            let message = String(cString: err)
+            switch exitStatus {
+            case EPERM, EACCES, 0, -1:
+                throw BootKitError.permissionDenied(path: path, errno: exitStatus > 0 ? exitStatus : EPERM, detail: message)
+            case EBUSY:
+                throw BootKitError.generic("\(path) is busy. Close any app using the drive (Finder windows, Disk Utility, backup or antivirus software) and try again.")
+            default:
+                throw BootKitError.openFailed(path, exitStatus)
+            }
         }
         logDebug("Opened \(path) through authopen (fd \(fd))")
         return fd

@@ -65,6 +65,7 @@ public enum Shell {
         do {
             try process.run()
         } catch {
+            logDebug("  could not launch \(executable): \(error.localizedDescription)")
             throw BootKitError.commandFailed((executable as NSString).lastPathComponent, -1, error.localizedDescription)
         }
 
@@ -93,7 +94,21 @@ public enum Shell {
         collector.flush()
 
         if cancelled { throw BootKitError.cancelled }
-        return ShellResult(status: process.terminationStatus, stdout: collector.out, stderr: collector.err)
+        let result = ShellResult(status: process.terminationStatus, stdout: collector.out, stderr: collector.err)
+        if logCommand && Log.shared.verbose {
+            let name = (executable as NSString).lastPathComponent
+            logDebug("  \(name) exited with status \(result.status)")
+            // Failed commands: everything they printed (bounded). Successful ones: a short tail.
+            let limit = result.ok ? 6 : 40
+            for (stream, text) in [("stdout", result.stdout), ("stderr", result.stderr)] {
+                let lines = text.split(whereSeparator: { $0.isNewline })
+                    .map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+                guard !lines.isEmpty else { continue }
+                if lines.count > limit { logDebug("  [\(name) \(stream)] … \(lines.count - limit) earlier line(s) omitted") }
+                for l in lines.suffix(limit) { logDebug("  [\(name) \(stream)] \(String(l.prefix(400)))") }
+            }
+        }
+        return result
     }
 
     /// Run and throw if the exit status is not zero.

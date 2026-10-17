@@ -107,14 +107,14 @@ public enum JobEvent: Codable, Sendable {
 
     public var jsonLine: String {
         let enc = JSONEncoder()
-        enc.dateEncodingStrategy = .iso8601
+        enc.dateEncodingStrategy = .millisecondsSince1970  // keep sub-second log timestamps
         let d = (try? enc.encode(self)) ?? Data()
         return String(decoding: d, as: UTF8.self) + "\n"
     }
 
     public static func parse(_ line: String) -> JobEvent? {
         let dec = JSONDecoder()
-        dec.dateDecodingStrategy = .iso8601
+        dec.dateDecodingStrategy = .millisecondsSince1970
         return try? dec.decode(JobEvent.self, from: Data(line.utf8))
     }
 }
@@ -129,6 +129,7 @@ public final class JobReporter: @unchecked Sendable {
     private var phaseStart = Date()
     private var lastEmit = Date.distantPast
     private var current = JobProgress(phase: "")
+    private var lastLoggedBucket = 0
     public private(set) var notices: [String] = []
 
     public init(sink: @escaping Sink) { self.sink = sink }
@@ -142,6 +143,7 @@ public final class JobReporter: @unchecked Sendable {
         lock.lock()
         if let i = phases.firstIndex(where: { $0.0 == phase }) { phaseIndex = i }
         phaseStart = Date()
+        lastLoggedBucket = 0
         current = JobProgress(phase: phase, detail: detail, fraction: total == nil ? nil : 0, overall: overall(0),
                               bytesDone: total == nil ? nil : 0, bytesTotal: total)
         let p = current
@@ -165,7 +167,20 @@ public final class JobReporter: @unchecked Sendable {
         }
         current.overall = overall(current.fraction ?? 0)
         let p = current
+        // Verbose log: one line per 10% step of the current phase.
+        var milestone: Int?
+        if let f = current.fraction {
+            let bucket = Int(f * 10)
+            if bucket > lastLoggedBucket { lastLoggedBucket = bucket; milestone = bucket * 10 }
+        }
         lock.unlock()
+        if let m = milestone, Log.shared.verbose {
+            var line = "  \(p.phase): \(m)%"
+            if let done = p.bytesDone, let total = p.bytesTotal { line += " (\(Units.human(done)) of \(Units.human(total)))" }
+            if let r = p.bytesPerSecond { line += " at \(Units.rate(r))" }
+            if let d = p.detail { line += " — \(d)" }
+            logDebug(line)
+        }
         sink(.progress(p))
     }
 

@@ -58,6 +58,8 @@ final class AppModel: ObservableObject {
     @Published var showSaveImage = false
     @Published var updateAvailable: String?
 
+    /// Persistent log (~/Library/Logs/RufusAdvanced), always with the full detail.
+    let logFile = LogFile()
     let downloads = DownloadManager()
     let settings = AppSettings.shared
     private var watcher: DiskWatcher?
@@ -66,7 +68,9 @@ final class AppModel: ObservableObject {
     private var jobStarted = Date()
 
     init() {
-        Log.shared.verbose = settings.verboseLog
+        // Detailed messages are always produced (and written to the log file); the
+        // "Verbose log" toggle only decides whether they are shown in the log views.
+        Log.shared.verbose = true
         Log.shared.addSink { [weak self] entry in
             DispatchQueue.main.async { self?.appendLog(entry) }
         }
@@ -75,6 +79,8 @@ final class AppModel: ObservableObject {
         watcher?.start()
         refreshDisks()
         logInfo("RufusAdvanced \(BootKit.version) on macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
+        logDebug("App: \(Bundle.main.bundlePath) (uid \(getuid())); log file: \(logFile.url.path)")
+        if let w = AppLocation.warning { logWarning(w) }
         applyRecommendation()
         checkForUpdates()
     }
@@ -82,6 +88,7 @@ final class AppModel: ObservableObject {
     var isBusy: Bool { state == .running || state == .preparing }
 
     private func appendLog(_ e: LogEntry) {
+        logFile.write(e)
         log.append(e)
         if log.count > 20_000 { log.removeFirst(2_000) }
     }
@@ -382,10 +389,15 @@ final class AppModel: ObservableObject {
                 state = .cancelled
                 progress = nil
             } else {
-                state = .failed(err ?? "Unknown error")
+                let message = err ?? "Unknown error"
+                state = .failed(message.split(separator: "\n").first.map(String.init) ?? message)
                 progress = nil
                 NSSound(named: "Basso")?.play()
+                // The status bar has room for one line: show the whole explanation and keep the log open.
+                settings.showLogPane = true
+                alert = Alert(title: "The operation failed", message: message + "\n\nThe log below (and in ~/Library/Logs/RufusAdvanced) has the details.")
             }
+            logFile.flush()
             NSApp.requestUserAttention(.informationalRequest)
             refreshDisks()
         }
@@ -428,6 +440,34 @@ final class AppModel: ObservableObject {
         state = .preparing
         notices = []
         launch(spec)
+    }
+
+    // MARK: - Log export
+
+    /// The whole log as text (verbose lines included, so it is useful for bug reports).
+    var logText: String { log.map(\.formatted).joined(separator: "\n") }
+
+    func copyLog() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(logText, forType: .string)
+    }
+
+    func saveLog() {
+        let p = NSSavePanel()
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyyMMdd-HHmmss"
+        p.nameFieldStringValue = "rufusadvanced-\(f.string(from: Date())).log"
+        p.allowedContentTypes = [.plainText, .log]
+        if p.runModal() == .OK, let u = p.url {
+            do { try logText.write(to: u, atomically: true, encoding: .utf8) }
+            catch { alert = Alert(title: "Could not save the log", message: error.localizedDescription) }
+        }
+    }
+
+    func revealLogFile() {
+        logFile.flush()
+        NSWorkspace.shared.activateFileViewerSelecting([logFile.url])
     }
 
     // MARK: - Updates

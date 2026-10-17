@@ -37,8 +37,19 @@ public enum DiskUtil {
             args.removeAll { $0 == "nobrowse" }
             r = try Shell.run(diskutil, args)
         }
+        if !r.ok, mountPoint != nil {
+            // Without root, some macOS versions refuse custom mount points: let DiskArbitration
+            // choose one under /Volumes (still hidden from Finder with nobrowse).
+            logDebug("diskutil refused the private mount point for \(slice); retrying with the default mount point")
+            r = try Shell.run(diskutil, readOnly ? ["mount", "readOnly", "nobrowse", slice] : ["mount", "nobrowse", slice])
+            if !r.ok { r = try Shell.run(diskutil, readOnly ? ["mount", "readOnly", slice] : ["mount", slice]) }
+            guard r.ok else { throw BootKitError.mountFailed("\(slice): \(r.combined)") }
+            guard let mp = mountPointOf(slice) else { throw BootKitError.mountFailed(slice) }
+            logDebug("Mounted \(slice) at \(mp)")
+            return mp
+        }
         guard r.ok else { throw BootKitError.mountFailed("\(slice): \(r.combined)") }
-        if let mountPoint { return mountPoint }
+        if let mountPoint { logDebug("Mounted \(slice) at \(mountPoint)"); return mountPoint }
         guard let mp = mountPointOf(slice) else { throw BootKitError.mountFailed(slice) }
         return mp
     }
