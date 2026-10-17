@@ -35,17 +35,19 @@ native SwiftUI interface: pick a drive, pick (or download) an image, press **STA
 ### Any operating system
 | | |
 |---|---|
-| **Windows 7 → 11** | ISO mode with FAT32 (install.wim > 4 GB is split automatically), exFAT/NTFS + UEFI:NTFS, MBR/GPT, BIOS + UEFI, Windows 7 UEFI fix |
+| **Windows 7 → 11** | ISO mode with **NTFS + UEFI:NTFS** (built in — like Rufus, for install.wim > 4 GB), FAT32 (install.wim split with wimlib), exFAT, MBR/GPT, BIOS + UEFI, Windows 7 UEFI fix |
 | **Windows customization** | Rufus' *Windows User Experience* options: bypass TPM / Secure Boot / RAM checks, no Microsoft account, local account, regional settings copied from your Mac, no data collection, no BitLocker, QoL tweaks (Copilot/OneDrive/Outlook…), SkuSiPolicy, *Windows CA 2023* bootloaders, S-Mode, ⚠ silent install. Also the 24H2+ in-place upgrade bypass (setup wrapper + appraiserres) |
-| **Linux** | ISO mode (FAT32/exFAT, Syslinux install with signature-verified version matching, GRUB 2 BIOS, label & kernel option patching) or DD mode for ISOHybrid images |
+| **Linux** | ISO mode (FAT32/exFAT/NTFS, Syslinux install with signature-verified version matching, GRUB 2 BIOS, label & kernel option patching) or DD mode for ISOHybrid images |
 | **Linux persistence** | Ubuntu (`casper-rw`) and Debian (`persistence` + `persistence.conf`) persistent partitions — ext3 is created natively, no extra tools |
-| **macOS** | Any installer from Lion 10.7 to the latest release, using Apple's `createinstallmedia` (or `asr` for Lion / Mountain Lion). Works from an *Install macOS* app, an `InstallAssistant.pkg`, Apple's legacy `InstallMacOSX.dmg`, or a 10.13–10.15 package set |
+| **macOS** | Any installer from Lion 10.7 to the latest release, using Apple's `createinstallmedia` (or `asr` for Lion / Mountain Lion). Works from an *Install macOS* app, an `InstallAssistant.pkg`, Apple's legacy `InstallMacOSX.dmg`, or a 10.13–10.15 package set. **One click** with *Get Installer*: download → install into Applications → verify → selected |
 | **Raw images** | `.img`, `.iso` (hybrid), `.gz`, `.xz`, `.bz2`, `.zst`, `.zip`, `.7z`, `.lzma`, fixed `.vhd`, `.vhdx`/`.vmdk`/`.qcow2` (with qemu-img), `.dmg` — written in DD mode with optional read-back verification |
 | **Other boot types** | Non bootable, FreeDOS (with keyboard layout), Syslinux 4/6, GRUB 2, UEFI:NTFS |
 
 ### Download Center — official sources only
 * **macOS**: every full installer listed in Apple's software update catalog (incl. betas, optional) plus Apple's direct
   links for Lion → Sierra. Downloads come straight from `swcdn.apple.com` / `updates.cdn-apple.com` and are SHA-1 verified.
+  *Get Installer* also installs the package into Applications and checks it (full installer, payload, Apple signatures);
+  installers already on your Mac are listed with a one-click *Use*.
 * **Windows**: Windows 11 / 10 ISOs (all languages, x64 + ARM64) straight from Microsoft — same method as Rufus' Fido script — and UEFI Shell images.
 * **Linux**: Ubuntu (+ Kubuntu, Xubuntu, Lubuntu, MATE), Linux Mint, Debian (netinst + live), Fedora, Arch, Kali, Pop!_OS,
   Rocky, AlmaLinux, openSUSE Tumbleweed, Tails, Alpine and Proxmox VE. The latest versions are resolved live from each
@@ -67,6 +69,17 @@ See [docs/RUFUS-PARITY.md](docs/RUFUS-PARITY.md) for the complete option-by-opti
 * No background service or kernel extension is installed.
 
 ## Install
+
+### Homebrew
+
+```bash
+brew install --cask hashim1999164/tap/rufusadvanced
+```
+
+The cask installs the app in */Applications*, clears the download quarantine (the app is not notarized) and links the
+command line tool as `rufusadv`. Update with `brew upgrade --cask rufusadvanced`.
+
+### Manual
 
 1. Download `RufusAdvanced-x.y.z-macOS.dmg` from the [latest release](https://github.com/Hashim1999164/RufusAdvanced/releases/latest).
 2. Drag **RufusAdvanced** to *Applications*.
@@ -100,7 +113,7 @@ sudo /Applications/RufusAdvanced.app/Contents/MacOS/rufusadv-helper write --imag
 
 ## Optional tools
 
-Everything works out of the box. These Homebrew packages unlock extras:
+Everything works out of the box — including NTFS, which is built in. These Homebrew packages unlock extras:
 
 | Tool | Install | Unlocks |
 |---|---|---|
@@ -109,7 +122,6 @@ Everything works out of the box. These Homebrew packages unlock extras:
 | zstd / xz | `brew install zstd xz` | `.zst` / `.lzma` images (`.gz`, `.xz`, `.bz2`, `.zip` are built in) |
 | sevenzip | `brew install sevenzip` | `.7z` archived images |
 | qemu | `brew install qemu` | VHDX, dynamic VHD, VMDK, QCOW2 images |
-| ntfs-3g + macFUSE | see [ntfs-3g-mac](https://github.com/gromgit/homebrew-fuse) | NTFS formatting and copying |
 
 ## Building from source
 
@@ -135,8 +147,16 @@ START and enter your password. If it still fails, enable RufusAdvanced in System
 Disk Access. Turn on **Verbose** in the log pane at the bottom of the window to see every step; logs are also saved in
 `~/Library/Logs/RufusAdvanced/`.
 
-**Windows: FAT32 or exFAT?** FAT32 boots everywhere (BIOS, UEFI, Secure Boot). If the image's install.wim is larger
-than 4 GB it is split into `.swm` files (needs wimlib). Without wimlib, exFAT + UEFI:NTFS is used — disable Secure Boot to boot it.
+**Windows: NTFS or FAT32?** When install.wim is larger than 4 GB (the FAT32 file limit, true for most current ISOs),
+RufusAdvanced uses NTFS + UEFI:NTFS like Rufus: it boots on UEFI PCs (the UEFI:NTFS loader is Secure Boot signed; a few
+PCs still need Secure Boot disabled) and on BIOS PCs. FAT32 with a split install.wim (needs `brew install wimlib`)
+boots everywhere, including Macs and the strictest Secure Boot setups.
+
+**Do I need macFUSE for NTFS?** No. RufusAdvanced embeds the ntfs-3g library and writes NTFS directly.
+
+**macOS: how do I get an installer?** Click **Download › macOS…**, then **Get Installer** next to the version you want.
+RufusAdvanced downloads it from Apple, installs it into Applications (you'll be asked for your password), verifies it and
+selects it. Already have a downloaded `InstallAssistant.pkg`? Drop it on the window and click **Install to Applications**.
 
 **Linux: ISO or DD mode?** DD mode is the most faithful for ISOHybrid images. ISO mode keeps the drive usable as storage
 and enables persistence.
@@ -154,6 +174,7 @@ Security issues: see [SECURITY.md](SECURITY.md).
 * [Fido](https://github.com/pbatard/Fido) — Windows ISO download method (GPLv3).
 * [ms-sys](https://ms-sys.sourceforge.net/) — boot records (GPLv2+). [Syslinux](https://wiki.syslinux.org) (GPLv2+). [GRUB](https://www.gnu.org/software/grub/) (GPLv3+). [FreeDOS](https://www.freedos.org) (GPLv2).
 * [UEFI:NTFS](https://github.com/pbatard/uefi-ntfs) and [uefi-md5sum](https://github.com/pbatard/uefi-md5sum) — Pete Batard (GPLv2+).
+* [ntfs-3g](https://github.com/tuxera/ntfs-3g) — libntfs-3g and mkntfs by Tuxera and contributors (GPLv2+), embedded for NTFS support.
 
 ## License
 

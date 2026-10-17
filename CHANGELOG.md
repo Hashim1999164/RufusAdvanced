@@ -5,6 +5,23 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-10-17
+
+### Added
+- **Built-in NTFS.** The ntfs-3g library and mkntfs are embedded: NTFS is formatted and filled directly, without macFUSE,
+  Homebrew or mounting. Windows images whose install.wim is larger than 4 GB now default to **NTFS + UEFI:NTFS**, exactly
+  like Rufus (FAT32 + split install.wim and exFAT remain available). Windows customization, Linux config patching, UEFI
+  media validation and extended labels all work on NTFS.
+- **macOS installer assistant.** *Get Installer* downloads Apple's InstallAssistant.pkg, installs it into Applications
+  (one password prompt, live progress), verifies the result (full installer, complete payload, Apple code signatures)
+  and selects it — one click. Installers already in Applications are listed with a one-click *Use*; selecting a .pkg
+  offers *Install to Applications* / *Open in Installer* (the result is detected automatically). Packages that are not
+  signed by Apple are refused.
+- **Homebrew:** `brew install --cask hashim1999164/tap/rufusadvanced`.
+- Live log pane in the main window with a **Verbose** toggle, Copy, Save and Show-in-Finder; full detail (commands, exit
+  codes, errno, authorization status, progress, helper output) is always written to `~/Library/Logs/RufusAdvanced/`.
+- Millisecond timestamps in the log.
+
 ### Fixed
 - "Could not open /dev/rdiskN: Operation not permitted" when writing to a real USB drive: raw disk access now goes
   through Apple's `authopen` (one password dialog per job, no Full Disk Access needed); the helper runs as you.
@@ -12,17 +29,13 @@ All notable changes to this project are documented here. The format follows
 - Permission errors (EPERM/EACCES) now explain what to do instead of showing the raw error; the app warns when it runs
   from Desktop, Documents, Downloads, a disk image or a translocated location.
 - `diskutil mount` falls back to the default mount point when a private one is refused.
+- The File system picker no longer shows a blank entry and a macFUSE warning for NTFS.
 
 ### Changed
 - "Eject the drive when finished" is now off by default (existing settings are reset once). The finished drive is
   remounted normally so it appears in Finder and on the Desktop; the status bar shows "Ready: mounted at /Volumes/…"
   with a **Show in Finder** button. When eject is on, the status says the drive was ejected and is safe to remove.
 - CLI: `--eject` to eject (default: mount in Finder), `--no-mount` to leave it unmounted.
-
-### Added
-- Live log pane in the main window with a **Verbose** toggle, Copy, Save and Show-in-Finder; full detail (commands, exit
-  codes, errno, authorization status, progress, helper output) is always written to `~/Library/Logs/RufusAdvanced/`.
-- Millisecond timestamps in the log.
 
 ## [1.0.1] - 2026-10-17
 

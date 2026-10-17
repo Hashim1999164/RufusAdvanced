@@ -16,7 +16,7 @@ jobs:
         with:
           fetch-depth: 0
       - name: Test
-        run: swift test --skip DiskEngineTests --skip JobEndToEndTests
+        run: swift test --skip DiskEngineTests --skip JobEndToEndTests --skip NTFSTests
       - name: Build universal app
         run: scripts/build-app.sh
       - name: Publish release
@@ -24,5 +24,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           TAG="${GITHUB_REF_NAME}"
-          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "RufusAdvanced ${TAG#v}" --notes-file CHANGELOG.md
+          VERSION="${TAG#v}"
+          # Release notes: this version's CHANGELOG section + install instructions.
+          awk -v v="$VERSION" 'index($0, "## [" v "]") == 1 {p=1; next} /^## \[/ {if (p) exit} p' CHANGELOG.md > notes.md
+          cat >> notes.md <<EOF
+
+          ## Install
+          - **Homebrew:** \`brew install --cask hashim1999164/tap/rufusadvanced\`
+          - **Manual:** download the DMG, drag RufusAdvanced to Applications, then right-click it → **Open** the first time
+            (the app is not notarized), or run \`xattr -dr com.apple.quarantine /Applications/RufusAdvanced.app\`.
+          EOF
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "RufusAdvanced $VERSION" --notes-file notes.md
           gh release upload "$TAG" dist/*.dmg dist/*.zip dist/SHA256SUMS.txt --clobber

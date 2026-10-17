@@ -29,7 +29,7 @@ How every option of Rufus 4.15 maps to RufusAdvanced on macOS.
 |---|---|
 | Volume label (with Rufus label sanitizing) | ✅ |
 | FAT / FAT32 / exFAT / UDF | ✅ built in |
-| NTFS | 🟡 needs `mkntfs`; copying files onto NTFS needs macFUSE + ntfs-3g |
+| NTFS | ✅ built in (embedded ntfs-3g + mkntfs, no macFUSE) |
 | ext2 / ext3 | ✅ native formatter |
 | ext4 | 🟡 needs e2fsprogs (`brew install e2fsprogs`) |
 | ReFS | ❌ no ReFS implementation exists for macOS |
@@ -46,7 +46,7 @@ How every option of Rufus 4.15 maps to RufusAdvanced on macOS.
 | ISO mode / DD mode selection for ISOHybrid images | ✅ |
 | Compressed images (.gz .xz .bz2 .zst .zip .lzma .7z) | ✅ (.zst/.lzma/.7z need Homebrew tools) |
 | VHD / VHDX / FFU / WIM sources | 🟡 fixed VHD built in; VHDX & dynamic VHD via qemu-img; FFU/WIM application not supported |
-| Windows install.wim > 4 GB on FAT32 | 🟡 split into .swm (wimlib) — Rufus uses NTFS instead; exFAT + UEFI:NTFS without wimlib |
+| Windows install.wim > 4 GB | ✅ NTFS + UEFI:NTFS by default, like Rufus; also FAT32 + split .swm (wimlib) or exFAT + UEFI:NTFS |
 | UEFI:NTFS for NTFS/exFAT media | ✅ |
 | Windows 7 x64 UEFI fix | 🟡 needs wimlib |
 | Windows XP / WinPE (masquerading, txtsetup patching) | 🟡 boot records and masquerading only |
@@ -78,7 +78,7 @@ How every option of Rufus 4.15 maps to RufusAdvanced on macOS.
 | Rufus feature | RufusAdvanced |
 |---|---|
 | Download ISO (Fido: Windows 11/10, UEFI Shell) | ✅ native port, catalog auto-updated from upstream Fido |
-| macOS installer downloads | ✅ (extra) Apple catalog + legacy direct links |
+| macOS installer downloads | ✅ (extra) Apple catalog + legacy direct links; one-click *Get Installer* (download → install into Applications → verify → use) |
 | Linux downloads | ✅ (extra) 17 distributions with SHA-256 verification |
 | Compute image checksums (MD5/SHA-1/SHA-256/SHA-512) | ✅ |
 | Save drive to VHD | ✅ .img / fixed .vhd / .dmg |

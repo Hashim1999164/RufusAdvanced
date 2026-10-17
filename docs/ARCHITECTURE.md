@@ -40,8 +40,8 @@ Imager do. Every whole-disk and slice open in the pipeline (partitioning, re-pro
 blocks, DD, save image) goes through `RawDevice`, so through this path.
 
 External formatters that open the device themselves (newfs_msdos/newfs_exfat) can't use those descriptors, so FAT12/16/32
-and exFAT are written in-process (`FATFormatter`). UDF (`newfs_udf`), NTFS (`mkntfs`) and `mke2fs` still open the device
-themselves; if macOS refuses them, the error explains the alternatives. Permission failures surface as
+and exFAT are written in-process (`FATFormatter`), and NTFS through the embedded ntfs-3g (`CNTFS`, `NTFSVolume`).
+UDF (`newfs_udf`) and `mke2fs` still open the device themselves; if macOS refuses them, the error explains the alternatives. Permission failures surface as
 `BootKitError.permissionDenied` with numbered, actionable steps (move the app to /Applications, enter the password,
 grant Full Disk Access). `AppLocation` detects apps run from Desktop/Documents/Downloads/a disk image or translocated.
 
@@ -58,10 +58,33 @@ at the bottom of the main window and in the Log window; the **Verbose** toggle d
 macOS removes a disk's partition nodes while its whole-disk device is open for writing. `DiskPreparer` therefore does
 all whole-disk writes in a single session — wipe, MBR/GPT (`PartitionTableWriter`), MBR boot code and secondary boot
 record (`BootRecords`), UEFI:NTFS payload — closes the device, waits for the kernel to re-probe the new slices, and only
-then formats each slice (`Formatter`: in-process `FATFormatter` for FAT/exFAT, newfs_udf, diskutil for HFS+/APFS, native `Ext2Formatter`, optional mkntfs/mke2fs),
+then formats each slice (`Formatter`: in-process `FATFormatter` for FAT/exFAT, embedded mkntfs for NTFS, newfs_udf, diskutil for HFS+/APFS, native `Ext2Formatter`, optional mke2fs),
 writes the partition boot record through the slice device, mounts it `nobrowse`, copies files (`FileCopier`), applies
 OS specific setup (`WindowsSetup`, `LinuxSetup`, `SyslinuxInstaller`) and finally removes macOS litter
 (`.fseventsd`, `.Spotlight-V100`, AppleDouble `._` files created for the kernel's provenance xattr).
+
+## NTFS
+
+macOS can't write NTFS, so `Sources/CNTFS` vendors libntfs-3g and mkntfs (see `Sources/CNTFS/README-ntfs-3g.txt` for
+the exact changes). `rufus_ntfs.c` replaces ntfs-3g's `unix_io` device with one that works on an already open
+descriptor and a byte range (`rufusfd:<fd>:<offset>:<size>:<sector size>`), doing sector-aligned read-modify-write so it
+works on raw character devices, authopen descriptors and disk images alike. mkntfs runs in-process (`mkntfs_main`).
+
+Files can't be copied through a mount, so ISO mode on NTFS uses `NTFSWriter`: everything the OS-specific setup changes
+(Windows customization, Linux config patches, extracted EFI files, uefi-md5sum loaders, md5sum.txt, autorun.inf) is
+prepared in an *overlay* folder from copies of the image's files; the image tree and the overlay are then merged
+(overlay wins, symlinks dereferenced) and written to the volume in one streaming pass with progress and cancellation.
+Volumes are opened in ignore-case mode so lookups behave like Windows.
+
+## macOS installer assistant
+
+`MacInstallerLibrary` finds `Install macOS *.app` bundles in /Applications and ~/Applications and verifies them: full
+installer (not a stub), payload present and complete, Apple code signature of the app and of `createinstallmedia`
+(`SecStaticCodeCheckValidity` with `anchor apple`, resources not re-hashed), Rosetta when needed. The helper operation
+`installMacPackage` (root, one administrator prompt) checks that the package is signed by Apple
+(`pkgutil --check-signature`), runs `installer -pkg … -target / -verboseR` with live progress, hands the new app to the
+user and verifies it. `MacInstallerAssistant` in the app chains download → install → verify → select, and watches
+/Applications when the user prefers Apple's Installer.
 
 ## Ports from Rufus
 
