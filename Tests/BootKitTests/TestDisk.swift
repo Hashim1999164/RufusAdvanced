@@ -21,7 +21,13 @@ final class TestDisk {
         disk = String(id).trimmingCharacters(in: .whitespaces)
     }
 
+    private var detached = false
+
+    /// Idempotent: a second call (e.g. `defer` + `deinit`) must not detach another test's disk
+    /// that has since been attached under the same diskN number.
     func detach() {
+        guard !detached else { return }
+        detached = true
         _ = try? Shell.run("/usr/bin/hdiutil", ["detach", "-force", "/dev/\(disk)"])
         try? FileManager.default.removeItem(atPath: imagePath)
     }

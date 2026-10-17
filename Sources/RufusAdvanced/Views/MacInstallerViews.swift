@@ -212,7 +212,7 @@ struct MacInstallerTips: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Tips").font(.subheadline.weight(.semibold))
-            InfoLine(text: "“Get Installer” downloads Apple's InstallAssistant.pkg (SHA-1 checked), installs it into Applications with your password, checks Apple's signatures and the payload, then selects it — nothing else to do.", systemImage: "1.circle")
+            InfoLine(text: "“Get Installer” downloads Apple's InstallAssistant.pkg, installs it into Applications with your password, checks Apple's signatures and the payload, then selects it — nothing else to do.", systemImage: "1.circle")
             InfoLine(text: "Already opened the .pkg yourself? Let Apple's Installer finish; the new “Install macOS” app shows up here automatically.", systemImage: "2.circle")
             InfoLine(text: "The installer app takes 13–18 GB. Keep it to make more USB drives later, or drag it to the Trash when you're done.", systemImage: "3.circle")
             InfoLine(text: "macOS installers need a USB drive of at least 16 GB (8 GB for 10.15 and older). The drive is erased as Mac OS Extended, GUID.", systemImage: "4.circle")

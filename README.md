@@ -45,15 +45,17 @@ native SwiftUI interface: pick a drive, pick (or download) an image, press **STA
 
 ### Download Center — official sources only
 * **macOS**: every full installer listed in Apple's software update catalog (incl. betas, optional) plus Apple's direct
-  links for Lion → Sierra. Downloads come straight from `swcdn.apple.com` / `updates.cdn-apple.com` and are SHA-1 verified.
+  links for Lion → Sierra. Downloads come straight from `swcdn.apple.com` / `updates.cdn-apple.com` (optionally checked against Apple's package checksums).
   *Get Installer* also installs the package into Applications and checks it (full installer, payload, Apple signatures);
   installers already on your Mac are listed with a one-click *Use*.
 * **Windows**: Windows 11 / 10 ISOs (all languages, x64 + ARM64) straight from Microsoft — same method as Rufus' Fido script — and UEFI Shell images.
 * **Linux**: Ubuntu (+ Kubuntu, Xubuntu, Lubuntu, MATE), Linux Mint, Debian (netinst + live), Fedora, Arch, Kali, Pop!_OS,
   Rocky, AlmaLinux, openSUSE Tumbleweed, Tails, Alpine and Proxmox VE. The latest versions are resolved live from each
-  project's checksum list / API, and every download is **SHA-256 verified**.
+  project's checksum list / API (optional SHA-256 check).
 * **Any URL**, with optional checksum.
 * Resumable downloads, a library of previous downloads that are re-used automatically, *Download & Use*, and the choice to **keep** or **delete** images after writing.
+* Optional verification (off by default): SHA-256 for Linux/Windows, Apple's package checksums for macOS. A mismatch only
+  shows a warning — downloads are never deleted.
 
 ### Every Rufus option
 Partition scheme (MBR/GPT) · Target system (BIOS / UEFI / both) · File system (FAT, FAT32, exFAT, NTFS, UDF, ext2/3/4, HFS+, APFS) ·

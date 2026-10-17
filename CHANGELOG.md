@@ -5,6 +5,19 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-10-18
+
+### Fixed
+- **macOS downloads always failed with "Checksum mismatch" and the finished download was deleted.** Apple's catalog
+  `Digest` is the SHA-1 of the package's table of contents, not of the whole file. Apple packages are now verified the
+  right way: the table of contents must match the catalog, then every file inside the package is checked against it.
+- A checksum mismatch never deletes a download any more: the file is kept, marked *Done (unverified)* with the reason,
+  and can still be used.
+
+### Changed
+- Download verification is now **off by default** (also for existing installs, once). Turn it on in the Download Center
+  or in Settings › Downloads.
+
 ## [1.1.0] - 2026-10-17
 
 ### Added

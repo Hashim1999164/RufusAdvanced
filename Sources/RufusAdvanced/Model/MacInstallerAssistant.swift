@@ -106,7 +106,7 @@ final class MacInstallerAssistant: ObservableObject {
                     self.progress = JobProgress(phase: "Download paused", detail: "Resume it in the Download Center", fraction: item.fraction)
                 default:
                     let p = item.progress
-                    self.progress = JobProgress(phase: item.state == .verifying ? "Verifying download (SHA-1)" : "Downloading from Apple",
+                    self.progress = JobProgress(phase: item.state == .verifying ? "Verifying download" : "Downloading from Apple",
                                                 detail: p.map { "\(Units.human($0.bytes, decimal: true))\($0.total.map { " of " + Units.human($0, decimal: true) } ?? "")" },
                                                 fraction: item.fraction, bytesPerSecond: p?.bytesPerSecond)
                 }

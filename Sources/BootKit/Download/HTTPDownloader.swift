@@ -19,15 +19,25 @@ public struct TransferProgress: Sendable, Equatable {
     }
 }
 
-/// Resumable HTTP(S) download to a file with on-the-fly checksum verification.
+/// Resumable HTTP(S) download to a file with optional checksum verification.
 ///
 /// Data is written to "<destination>.part"; an interrupted download resumes with a Range
-/// request. The file is renamed to its final name only after the checksum matched.
+/// request. A finished download is always kept: a checksum that doesn't match is reported in
+/// `verification` (and logged) but never deletes the file.
 public final class HTTPDownload: NSObject, URLSessionDataDelegate, @unchecked Sendable {
+    public enum Verification: Equatable, Sendable {
+        case notChecked
+        case verified(String)        // what was checked, e.g. "SHA-256"
+        case mismatch(String)        // human readable explanation
+    }
+
     public let url: URL
     public let destination: String
     public let expected: (algorithm: HashAlgorithm, value: String)?
+    /// Apple software update package: catalog `Digest` (SHA-1 of the xar TOC), checked with `ApplePackageVerifier`.
+    public let appleDigest: String?
     public let headers: [String: String]
+    public private(set) var verification: Verification = .notChecked
 
     private var session: URLSession!
     private var task: URLSessionDataTask?
@@ -47,10 +57,12 @@ public final class HTTPDownload: NSObject, URLSessionDataDelegate, @unchecked Se
 
     public var partPath: String { destination + ".part" }
 
-    public init(url: URL, destination: String, expected: (HashAlgorithm, String)? = nil, headers: [String: String] = [:]) {
+    public init(url: URL, destination: String, expected: (HashAlgorithm, String)? = nil, appleDigest: String? = nil,
+                headers: [String: String] = [:]) {
         self.url = url
         self.destination = destination
         self.expected = expected.map { ($0.0, $0.1.lowercased()) }
+        self.appleDigest = appleDigest?.lowercased()
         self.headers = headers
         super.init()
         let cfg = URLSessionConfiguration.default
@@ -186,21 +198,39 @@ public final class HTTPDownload: NSObject, URLSessionDataDelegate, @unchecked Se
             if let total, received < total {
                 throw BootKitError.network("Download incomplete (\(Units.human(received)) of \(Units.human(total))). Try again to resume.")
             }
-            if let expected {
+            let name = (destination as NSString).lastPathComponent
+            let verifying: (Double) -> Void = { f in
+                self.onProgress?(TransferProgress(bytes: UInt64(Double(self.received) * f), total: self.received, bytesPerSecond: 0, phase: "Verifying"))
+            }
+            // Verification never deletes anything: the result is reported and the file is kept.
+            if let digest = appleDigest {
+                verifying(0)
+                do {
+                    switch try ApplePackageVerifier.verify(partPath, catalogDigest: digest, progress: verifying) {
+                    case .verified(let files, _):
+                        verification = .verified("Apple package (\(files) file\(files == 1 ? "" : "s"))")
+                    case .mismatch(let why):
+                        verification = .mismatch(why)
+                    }
+                } catch {
+                    verification = .mismatch("Could not verify the package: \(error.userMessage)")
+                }
+            } else if let expected {
                 let actual: String
                 if let h = hasher {
                     actual = h.finalize()[expected.algorithm] ?? ""
                 } else {
-                    onProgress?(TransferProgress(bytes: 0, total: received, bytesPerSecond: 0, phase: "Verifying"))
-                    actual = try MultiHasher.hashFile(at: partPath, algorithms: [expected.algorithm]) { f in
-                        self.onProgress?(TransferProgress(bytes: UInt64(Double(self.received) * f), total: self.received, bytesPerSecond: 0, phase: "Verifying"))
-                    }[expected.algorithm] ?? ""
+                    verifying(0)
+                    actual = try MultiHasher.hashFile(at: partPath, algorithms: [expected.algorithm], progress: verifying)[expected.algorithm] ?? ""
                 }
-                if actual.lowercased() != expected.value {
-                    try? FileManager.default.removeItem(atPath: partPath)
-                    throw BootKitError.checksumMismatch(expected: expected.value, actual: actual)
-                }
-                logInfo("\(expected.algorithm.rawValue) verified for \((destination as NSString).lastPathComponent)")
+                verification = actual.lowercased() == expected.value
+                    ? .verified(expected.algorithm.rawValue)
+                    : .mismatch("\(expected.algorithm.rawValue) mismatch: expected \(expected.value), got \(actual.lowercased()).")
+            }
+            switch verification {
+            case .verified(let what): logInfo("\(what) verified for \(name)")
+            case .mismatch(let why): logWarning("\(name): \(why) The file was kept.")
+            case .notChecked: break
             }
             try? FileManager.default.removeItem(atPath: destination)
             try FileManager.default.moveItem(atPath: partPath, toPath: destination)

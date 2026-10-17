@@ -217,7 +217,7 @@ struct DownloadSettings: View {
                     }
                 }
                 Toggle("Keep downloaded files after a successful write", isOn: $settings.keepDownloads)
-                Toggle("Verify checksums (SHA-256 / Apple SHA-1)", isOn: $settings.verifyDownloads)
+                Toggle("Verify downloads (SHA-256 / Apple package checksums) — warns only, never deletes", isOn: $settings.verifyDownloads)
             }
             Section("macOS") {
                 Toggle("Include beta releases from Apple's seed catalog", isOn: $settings.includeMacBetas)

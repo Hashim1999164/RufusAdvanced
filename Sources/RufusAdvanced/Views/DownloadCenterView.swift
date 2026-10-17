@@ -43,6 +43,7 @@ struct DownloadCenterView: View {
                 Spacer()
                 Toggle("Keep files after writing", isOn: $settings.keepDownloads).controlSize(.small)
                 Toggle("Verify checksums", isOn: $settings.verifyDownloads).controlSize(.small)
+                    .help("Check downloads against the publisher's checksums. A mismatch only shows a warning; the file is never deleted.")
             }
             .padding(.horizontal, 14).padding(.vertical, 8)
             .background(.bar)
@@ -490,6 +491,10 @@ struct DownloadRow: View {
                 if item.state.isActive || item.state == .paused {
                     ProgressView(value: item.fraction ?? 0).progressViewStyle(.linear)
                 }
+                if item.state == .completed, let w = item.warning {
+                    Text("Checksum didn't match — the file was kept. \(w)")
+                        .font(.caption).foregroundStyle(.orange).lineLimit(2).help(w)
+                }
             }
             switch item.state {
             case .downloading, .queued:
@@ -509,7 +514,7 @@ struct DownloadRow: View {
 
     var icon: String {
         switch item.state {
-        case .completed: return "checkmark.circle.fill"
+        case .completed: return item.warning == nil ? "checkmark.circle.fill" : "exclamationmark.circle.fill"
         case .failed: return "exclamationmark.triangle.fill"
         case .paused: return "pause.circle"
         case .verifying: return "checkmark.shield"
@@ -518,7 +523,7 @@ struct DownloadRow: View {
     }
     var color: Color {
         switch item.state {
-        case .completed: return .green
+        case .completed: return item.warning == nil ? .green : .orange
         case .failed: return .red
         default: return .accentColor
         }
@@ -526,7 +531,7 @@ struct DownloadRow: View {
     var detail: String {
         switch item.state {
         case .failed(let e): return e
-        case .completed: return "Done"
+        case .completed: return item.warning == nil ? "Done" : "Done (unverified)"
         case .paused: return "Paused"
         case .verifying: return "Verifying…"
         default:

@@ -11,7 +11,8 @@ final class AppSettings: ObservableObject {
         return dl + "/RufusAdvanced"
     }()
     @AppStorage("keepDownloads") var keepDownloads = true
-    @AppStorage("verifyDownloads") var verifyDownloads = true
+    /// Off by default: a checksum check never deletes a download, it only warns.
+    @AppStorage("verifyDownloads") var verifyDownloads = false
     @AppStorage("listUSBHardDrives") var listUSBHardDrives = false
     @AppStorage("showDiskImages") var showDiskImages = false
     @AppStorage("showAdvancedDrive") var showAdvancedDrive = false
@@ -34,6 +35,11 @@ final class AppSettings: ObservableObject {
         if !d.bool(forKey: "ejectDefaultOffMigrated") {
             d.set(false, forKey: "ejectWhenDone")
             d.set(true, forKey: "ejectDefaultOffMigrated")
+        }
+        // 1.1.0 and older verified downloads by default; turn it off once (users can turn it back on).
+        if !d.bool(forKey: "verifyDefaultOffMigrated") {
+            d.set(false, forKey: "verifyDownloads")
+            d.set(true, forKey: "verifyDefaultOffMigrated")
         }
     }
 

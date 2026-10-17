@@ -18,22 +18,24 @@ final class DownloadManager: ObservableObject {
         @Published var state: State = .queued
         @Published var progress: TransferProgress?
         @Published var currentPart: String = ""
+        /// Set when a checksum didn't match (the file is kept).
+        @Published var warning: String?
         var useWhenDone: Bool
         /// Called with the destination once the download completed (and was verified).
         var completions: [(String) -> Void] = []
-        var parts: [(url: String, file: String, expected: (HashAlgorithm, String)?)]
+        var parts: [(url: String, file: String, expected: (HashAlgorithm, String)?, appleDigest: String?)]
         var metadata: DownloadMetadata
         fileprivate var task: HTTPDownload?
         fileprivate var partIndex = 0
         fileprivate var bytesBefore: UInt64 = 0
         let totalSize: UInt64?
 
-        init(title: String, category: String, destination: String, parts: [(String, String, (HashAlgorithm, String)?)],
+        init(title: String, category: String, destination: String, parts: [(String, String, (HashAlgorithm, String)?, String?)],
              metadata: DownloadMetadata, totalSize: UInt64?, useWhenDone: Bool) {
             self.title = title
             self.category = category
             self.destination = destination
-            self.parts = parts.map { (url: $0.0, file: $0.1, expected: $0.2) }
+            self.parts = parts.map { (url: $0.0, file: $0.1, expected: $0.2, appleDigest: $0.3) }
             self.metadata = metadata
             self.totalSize = totalSize
             self.useWhenDone = useWhenDone
@@ -73,7 +75,8 @@ final class DownloadManager: ObservableObject {
 
     @discardableResult
     func download(url: String, fileName: String, title: String, source: DownloadMetadata.Source, category: String,
-                  sha256: String? = nil, sha1: String? = nil, size: UInt64? = nil, macInstaller: MacInstallerInfo? = nil,
+                  sha256: String? = nil, sha1: String? = nil, appleDigest: String? = nil, size: UInt64? = nil,
+                  macInstaller: MacInstallerInfo? = nil,
                   subfolder: String? = nil, useWhenDone: Bool = false, then: ((String) -> Void)? = nil) -> Item? {
         if let path = existing(url: url) {
             logInfo("Re-using previous download: \(path)")
@@ -89,11 +92,13 @@ final class DownloadManager: ObservableObject {
         }
         let folder = settings.ensureDownloadFolder() + "/" + category + (subfolder.map { "/" + $0 } ?? "")
         let dest = folder + "/" + fileName
-        let expected: (HashAlgorithm, String)? = settings.verifyDownloads ? (sha256.map { (.sha256, $0) } ?? sha1.map { (.sha1, $0) }) : nil
+        let verify = settings.verifyDownloads
+        let expected: (HashAlgorithm, String)? = verify ? (sha256.map { (.sha256, $0) } ?? sha1.map { (.sha1, $0) }) : nil
         let meta = DownloadMetadata(source: source, title: title, url: url, fileName: fileName, size: size,
                                     checksum: sha256 ?? sha1, checksumAlgorithm: sha256 != nil ? .sha256 : (sha1 != nil ? .sha1 : nil),
                                     macInstaller: macInstaller)
-        let item = Item(title: title, category: category, destination: dest, parts: [(url, dest, expected)], metadata: meta,
+        let item = Item(title: title, category: category, destination: dest,
+                        parts: [(url, dest, expected, verify ? appleDigest : nil)], metadata: meta,
                         totalSize: size, useWhenDone: useWhenDone)
         if let then { item.completions.append(then) }
         items.insert(item, at: 0)
@@ -106,9 +111,11 @@ final class DownloadManager: ObservableObject {
     func download(mac r: MacOSRelease, useWhenDone: Bool, then: ((String) -> Void)? = nil) -> Item? {
         let folderName = "\(r.name) \(r.version) \(r.build)".trimmingCharacters(in: .whitespaces)
         switch r.payload {
-        case .installAssistant(let url, let size, let sha1):
+        case .installAssistant(let url, let size, let digest):
+            // Apple's catalog Digest is the SHA-1 of the package's table of contents, not of the file.
             return download(url: url, fileName: "InstallAssistant.pkg", title: r.title, source: .apple, category: "macOS",
-                            sha1: sha1, size: size, macInstaller: r.installerInfo, subfolder: folderName, useWhenDone: useWhenDone, then: then)
+                            appleDigest: digest, size: size, macInstaller: r.installerInfo, subfolder: folderName,
+                            useWhenDone: useWhenDone, then: then)
         case .legacyDMG(let url, let size):
             return download(url: url, fileName: (url as NSString).lastPathComponent, title: r.title, source: .appleLegacy, category: "macOS",
                             size: size, macInstaller: r.installerInfo, subfolder: folderName, useWhenDone: useWhenDone, then: then)
@@ -119,10 +126,11 @@ final class DownloadManager: ObservableObject {
                 then?(folder)
                 return nil
             }
-            var parts: [(String, String, (HashAlgorithm, String)?)] = [(dist, folder + "/" + (dist as NSString).lastPathComponent, nil)]
+            var parts: [(String, String, (HashAlgorithm, String)?, String?)] = [(dist, folder + "/" + (dist as NSString).lastPathComponent, nil, nil)]
             for p in packages {
-                let exp: (HashAlgorithm, String)? = settings.verifyDownloads ? p.sha1.map { (.sha1, $0) } : nil
-                parts.append((p.url, folder + "/" + (p.url as NSString).lastPathComponent, exp))
+                let isPackage = p.url.lowercased().hasSuffix(".pkg")
+                let digest = settings.verifyDownloads && isPackage ? p.sha1 : nil
+                parts.append((p.url, folder + "/" + (p.url as NSString).lastPathComponent, nil, digest))
             }
             let meta = DownloadMetadata(source: .apple, title: r.title, url: dist, fileName: folderName, size: r.totalSize,
                                         macInstaller: r.installerInfo, productID: r.id)
@@ -142,7 +150,7 @@ final class DownloadManager: ObservableObject {
         let part = item.parts[item.partIndex]
         item.state = .downloading
         item.currentPart = (part.file as NSString).lastPathComponent
-        let task = HTTPDownload(url: url, destination: part.file, expected: part.expected)
+        let task = HTTPDownload(url: url, destination: part.file, expected: part.expected, appleDigest: part.appleDigest)
         item.task = task
         task.start(progress: { [weak item] p in
             DispatchQueue.main.async {
@@ -154,6 +162,10 @@ final class DownloadManager: ObservableObject {
                 guard let self, let item else { return }
                 switch result {
                 case .success(let path):
+                    if case .mismatch(let why) = task.verification {
+                        let part = (path as NSString).lastPathComponent
+                        item.warning = (item.warning.map { $0 + "\n" } ?? "") + (item.parts.count > 1 ? "\(part): " : "") + why
+                    }
                     item.bytesBefore += (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? UInt64) ?? 0
                     item.partIndex += 1
                     if item.partIndex < item.parts.count {
@@ -175,7 +187,7 @@ final class DownloadManager: ObservableObject {
 
     private func complete(_ item: Item) {
         var meta = item.metadata
-        meta.verified = item.parts.contains { $0.expected != nil }
+        meta.verified = item.warning == nil && item.parts.contains { $0.expected != nil || $0.appleDigest != nil }
         meta.downloadedAt = Date()
         meta.save(for: item.destination)
         if item.parts.count > 1 {
@@ -183,6 +195,7 @@ final class DownloadManager: ObservableObject {
         }
         item.state = .completed
         logInfo("Downloaded \(item.title) → \(item.destination)\(meta.verified ? " (verified)" : "")")
+        if let w = item.warning { logWarning("\(item.title): checksum warning (the file was kept): \(w)") }
         rescanLibrary()
         NSApp.requestUserAttention(.informationalRequest)
         if item.useWhenDone { onUse?(item.destination) }
