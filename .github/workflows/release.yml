@@ -31,8 +31,9 @@ jobs:
 
           ## Install
           - **Homebrew:** \`brew install --cask hashim1999164/tap/rufusadvanced\`
-          - **Manual:** download the DMG, drag RufusAdvanced to Applications, then right-click it → **Open** the first time
-            (the app is not notarized), or run \`xattr -dr com.apple.quarantine /Applications/RufusAdvanced.app\`.
+          - **Manual:** download the DMG and drag RufusAdvanced to Applications. If macOS refuses to open it (the app is
+            not notarized), go to System Settings › Privacy & Security and click **Open Anyway**, or run
+            \`xattr -dr com.apple.quarantine /Applications/RufusAdvanced.app\`.
           EOF
           gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "RufusAdvanced $VERSION" --notes-file notes.md
           gh release upload "$TAG" dist/*.dmg dist/*.zip dist/SHA256SUMS.txt --clobber
