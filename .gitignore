@@ -1,0 +1,13 @@
+.DS_Store
+/.build
+/.swiftpm
+/dist
+/Packaging/AppIcon.iconset
+*.xcodeproj
+xcuserdata/
+DerivedData/
+*.img
+*.iso
+!Resources/BootKit/uefi/uefi-ntfs.img
+!Resources/BootKit/grub2/boot.img
+!Resources/BootKit/grub2/core.img

@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build & test
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version
+      - name: Build (debug)
+        run: swift build
+      - name: Unit tests
+        run: swift test --skip DiskEngineTests --skip JobEndToEndTests
+      - name: Disk engine tests (disk images)
+        run: swift test --filter "DiskEngineTests|JobEndToEndTests"
+        continue-on-error: true
+      - name: Build app bundle (arm64)
+        run: ARCHS=arm64 scripts/build-app.sh
+      - name: Upload app
+        uses: actions/upload-artifact@v4
+        with:
+          name: RufusAdvanced-${{ github.sha }}
+          path: dist/*.zip
+          retention-days: 14

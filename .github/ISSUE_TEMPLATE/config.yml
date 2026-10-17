@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions & ideas
+    url: https://github.com/Hashim1999164/RufusAdvanced/discussions
+    about: Ask questions and discuss ideas in GitHub Discussions.
+  - name: Security vulnerability
+    url: https://github.com/Hashim1999164/RufusAdvanced/security/advisories/new
+    about: Report security issues privately.

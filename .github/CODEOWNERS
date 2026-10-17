@@ -1,0 +1,7 @@
+# Every change needs a review from a maintainer.
+*                       @Hashim1999164
+# Disk engine and privileged helper: extra care.
+/Sources/BootKit/Disk/  @Hashim1999164
+/Sources/BootKit/Jobs/  @Hashim1999164
+/Sources/RufusHelper/   @Hashim1999164
+/Resources/             @Hashim1999164

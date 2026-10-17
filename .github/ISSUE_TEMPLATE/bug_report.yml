@@ -1,0 +1,43 @@
+name: Bug report
+description: Something doesn't work as expected
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for reporting! Please search existing issues first.
+  - type: input
+    id: version
+    attributes:
+      label: RufusAdvanced version
+      placeholder: "1.0.0"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac model
+      placeholder: "macOS 15.3, MacBook Air M2"
+    validations:
+      required: true
+  - type: input
+    id: image
+    attributes:
+      label: Image used
+      description: File name or download (e.g. Win11_24H2_English_x64.iso, ubuntu-24.04.2-desktop-amd64.iso)
+  - type: textarea
+    id: options
+    attributes:
+      label: Options selected
+      description: Write mode, partition scheme, target system, file system, customizations…
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened? What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Log
+      description: Log window → Save…, then paste it here (remove personal information).
+      render: text
