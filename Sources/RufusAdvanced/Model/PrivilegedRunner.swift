@@ -65,13 +65,16 @@ final class PrivilegedRunner: @unchecked Sendable {
         // Disk images and other user-owned devices don't need administrator rights.
         // Raw disk access goes through authopen (one authorization dialog, no Full Disk Access);
         // only macOS installers (installer / createinstallmedia) need a root helper.
-        let needsAdmin = spec.operation == .write
-            && (spec.bootSelection == .macInstaller || spec.writeMode == .createInstallMedia || spec.writeMode == .asrRestore)
+        let needsAdmin = spec.operation == .installMacPackage || (spec.operation == .write
+            && (spec.bootSelection == .macInstaller || spec.writeMode == .createInstallMedia || spec.writeMode == .asrRestore))
         logDebug("Launching helper \(helper) as \(needsAdmin ? "root (administrator prompt)" : "the current user (uid \(getuid()))"): run --job <\(job.count) bytes> --events \(eventsPath)")
         if let w = AppLocation.warning { logWarning(w) }
         if needsAdmin {
             let command = ([helper] + args).map(shellQuote).joined(separator: " ") + " > \(shellQuote(outputPath)) 2>&1 &"
-            let script = "do shell script \"\(appleScriptEscape(command))\" with administrator privileges with prompt \"RufusAdvanced needs administrator rights to write to the drive \(spec.diskMediaName) (\(spec.disk)).\""
+            let reason = spec.operation == .installMacPackage
+                ? "RufusAdvanced needs administrator rights to install the macOS installer in Applications."
+                : "RufusAdvanced needs administrator rights to write to the drive \(spec.diskMediaName) (\(spec.disk))."
+            let script = "do shell script \"\(appleScriptEscape(command))\" with administrator privileges with prompt \"\(reason)\""
             let osa = Process()
             osa.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
             osa.arguments = ["-e", script]

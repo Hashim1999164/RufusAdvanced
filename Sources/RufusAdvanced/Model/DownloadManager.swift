@@ -19,6 +19,8 @@ final class DownloadManager: ObservableObject {
         @Published var progress: TransferProgress?
         @Published var currentPart: String = ""
         var useWhenDone: Bool
+        /// Called with the destination once the download completed (and was verified).
+        var completions: [(String) -> Void] = []
         var parts: [(url: String, file: String, expected: (HashAlgorithm, String)?)]
         var metadata: DownloadMetadata
         fileprivate var task: HTTPDownload?
@@ -72,14 +74,17 @@ final class DownloadManager: ObservableObject {
     @discardableResult
     func download(url: String, fileName: String, title: String, source: DownloadMetadata.Source, category: String,
                   sha256: String? = nil, sha1: String? = nil, size: UInt64? = nil, macInstaller: MacInstallerInfo? = nil,
-                  subfolder: String? = nil, useWhenDone: Bool = false) -> Item? {
+                  subfolder: String? = nil, useWhenDone: Bool = false, then: ((String) -> Void)? = nil) -> Item? {
         if let path = existing(url: url) {
             logInfo("Re-using previous download: \(path)")
             if useWhenDone { onUse?(path) }
+            then?(path)
             return nil
         }
-        if let running = items.first(where: { $0.parts.first?.url == url && $0.state.isActive }) {
+        if let running = items.first(where: { $0.parts.first?.url == url && ($0.state.isActive || $0.state == .paused) }) {
             running.useWhenDone = running.useWhenDone || useWhenDone
+            if let then { running.completions.append(then) }
+            if running.state == .paused { resume(running) }
             return running
         }
         let folder = settings.ensureDownloadFolder() + "/" + category + (subfolder.map { "/" + $0 } ?? "")
@@ -90,26 +95,29 @@ final class DownloadManager: ObservableObject {
                                     macInstaller: macInstaller)
         let item = Item(title: title, category: category, destination: dest, parts: [(url, dest, expected)], metadata: meta,
                         totalSize: size, useWhenDone: useWhenDone)
+        if let then { item.completions.append(then) }
         items.insert(item, at: 0)
         startPart(item)
         return item
     }
 
     /// macOS release from Apple's catalog / legacy links.
-    func download(mac r: MacOSRelease, useWhenDone: Bool) {
+    @discardableResult
+    func download(mac r: MacOSRelease, useWhenDone: Bool, then: ((String) -> Void)? = nil) -> Item? {
         let folderName = "\(r.name) \(r.version) \(r.build)".trimmingCharacters(in: .whitespaces)
         switch r.payload {
         case .installAssistant(let url, let size, let sha1):
-            download(url: url, fileName: "InstallAssistant.pkg", title: r.title, source: .apple, category: "macOS",
-                     sha1: sha1, size: size, macInstaller: r.installerInfo, subfolder: folderName, useWhenDone: useWhenDone)
+            return download(url: url, fileName: "InstallAssistant.pkg", title: r.title, source: .apple, category: "macOS",
+                            sha1: sha1, size: size, macInstaller: r.installerInfo, subfolder: folderName, useWhenDone: useWhenDone, then: then)
         case .legacyDMG(let url, let size):
-            download(url: url, fileName: (url as NSString).lastPathComponent, title: r.title, source: .appleLegacy, category: "macOS",
-                     size: size, macInstaller: r.installerInfo, subfolder: folderName, useWhenDone: useWhenDone)
+            return download(url: url, fileName: (url as NSString).lastPathComponent, title: r.title, source: .appleLegacy, category: "macOS",
+                            size: size, macInstaller: r.installerInfo, subfolder: folderName, useWhenDone: useWhenDone, then: then)
         case .distribution(let dist, let packages):
             let folder = settings.ensureDownloadFolder() + "/macOS/" + folderName
             if FileManager.default.fileExists(atPath: folder + "/.complete") {
                 if useWhenDone { onUse?(folder) }
-                return
+                then?(folder)
+                return nil
             }
             var parts: [(String, String, (HashAlgorithm, String)?)] = [(dist, folder + "/" + (dist as NSString).lastPathComponent, nil)]
             for p in packages {
@@ -120,8 +128,10 @@ final class DownloadManager: ObservableObject {
                                         macInstaller: r.installerInfo, productID: r.id)
             let item = Item(title: r.title, category: "macOS", destination: folder, parts: parts, metadata: meta,
                             totalSize: r.totalSize, useWhenDone: useWhenDone)
+            if let then { item.completions.append(then) }
             items.insert(item, at: 0)
             startPart(item)
+            return item
         }
     }
 
@@ -176,6 +186,9 @@ final class DownloadManager: ObservableObject {
         rescanLibrary()
         NSApp.requestUserAttention(.informationalRequest)
         if item.useWhenDone { onUse?(item.destination) }
+        let done = item.completions
+        item.completions = []
+        for c in done { c(item.destination) }
     }
 
     func pause(_ item: Item) { item.task?.pause(); item.state = .paused }

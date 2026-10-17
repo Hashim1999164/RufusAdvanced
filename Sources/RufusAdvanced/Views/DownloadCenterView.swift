@@ -85,6 +85,14 @@ struct MacDownloadsView: View {
                 Button { load() } label: { Image(systemName: "arrow.clockwise") }.disabled(loading)
             }
             .padding(14)
+            VStack(alignment: .leading, spacing: 10) {
+                if model.macInstallers.phase != .idle || model.macInstallers.watchingInstallerApp {
+                    MacInstallerProgressPanel(assistant: model.macInstallers)
+                }
+                InstalledMacInstallersList(assistant: model.macInstallers, compact: true)
+            }
+            .padding(.horizontal, 14).padding(.bottom, 10)
+            Divider()
             if loading {
                 ProgressView("Loading Apple's catalog…").frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error {
@@ -105,7 +113,19 @@ struct MacDownloadsView: View {
                     TableColumn("Size") { r in Text(Units.human(r.totalSize, decimal: true)) }.width(70)
                     TableColumn("") { r in
                         HStack(spacing: 6) {
-                            if let path = existing(r) {
+                            if case .installAssistant = r.payload {
+                                Button("Get Installer") { model.macInstallers.getAndInstall(r) }
+                                    .controlSize(.small).buttonStyle(.borderedProminent)
+                                    .disabled(model.macInstallers.phase.isBusy)
+                                    .help("One click: download from Apple, install into Applications, verify, and select it")
+                                if let path = existing(r) {
+                                    Button("Use .pkg") { model.selectImage(path: path) }.controlSize(.small)
+                                        .help("Use the downloaded package directly (it is expanded during each write)")
+                                } else {
+                                    Button("Download") { model.downloads.download(mac: r, useWhenDone: false) }.controlSize(.small)
+                                        .help("Only download InstallAssistant.pkg")
+                                }
+                            } else if let path = existing(r) {
                                 Button("Use") { model.selectImage(path: path) }.controlSize(.small)
                             } else {
                                 Button("Download") { model.downloads.download(mac: r, useWhenDone: false) }.controlSize(.small)
@@ -113,14 +133,14 @@ struct MacDownloadsView: View {
                                     .help("Download, then select it as the source automatically")
                             }
                         }
-                    }.width(150)
+                    }.width(190)
                 }
                 .contextMenu(forSelectionType: MacOSRelease.ID.self) { ids in
                     if let id = ids.first, let r = releases.first(where: { $0.id == id }) {
                         Button("Copy download link") { copy(link(r)) }
                     }
                 }
-                Text("macOS 11 and later: InstallAssistant.pkg (SHA-1 verified). 10.13–10.15: package set assembled with installer. 10.7–10.12: Apple's InstallMacOSX/InstallOS images. Writing a macOS installer needs administrator rights.")
+                Text("macOS 11 and later: “Get Installer” downloads InstallAssistant.pkg (SHA-1 verified), installs it into Applications, verifies it and selects it. 10.13–10.15: package set assembled with installer. 10.7–10.12: Apple's InstallMacOSX/InstallOS images. Installing and writing a macOS installer need administrator rights.")
                     .font(.caption).foregroundStyle(.secondary).padding(14)
             }
         }

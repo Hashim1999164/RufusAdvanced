@@ -7,6 +7,7 @@ public struct JobSpec: Codable, Sendable {
         case write          // create bootable / formatted media
         case saveImage      // read the device into an image file
         case badBlocksOnly  // just test the device
+        case installMacPackage  // install InstallAssistant.pkg (imagePath) into /Applications, no drive involved
     }
 
     public enum SaveFormat: String, Codable, CaseIterable, Sendable, Identifiable {
@@ -43,7 +44,7 @@ public struct JobSpec: Codable, Sendable {
     public var biosDriveID: UInt8 = 0x80
     public var persistenceSize: UInt64 = 0
     public var uefiMediaValidation = false
-    public var largeWIMStrategy: LargeWIMStrategy = .splitWIM
+    public var largeWIMStrategy: LargeWIMStrategy = .ntfsUEFINTFS
     public var windows: WindowsCustomization?
     public var verifyWrite = false
     public var ejectWhenDone = false

@@ -21,7 +21,15 @@ enum Snapshot {
             let windows = NSApp.windows.filter { $0.isVisible }
             guard let w = title.flatMap({ t in windows.first { $0.title == t } }) ?? windows.first,
                   let frameView = w.contentView?.superview else { NSApp.terminate(nil); return }
-            if env["RUFUSADV_SNAPSHOT_SWIFTUI"] != nil {
+            if env["RUFUSADV_SNAPSHOT_VIEW"] == "macassistant" {
+                let content = MacInstallerAssistantSheet(assistant: model.macInstallers).environmentObject(model)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                let r = ImageRenderer(content: content)
+                r.scale = 2
+                if let img = r.nsImage, let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) {
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out))
+                }
+            } else if env["RUFUSADV_SNAPSHOT_SWIFTUI"] != nil {
                 let content = VStack(alignment: .leading, spacing: 16) {
                     DriveSection(); BootSection()
                     if !model.layoutLocked { PropertiesSection(); FormatSection() } else { LockedLayoutNote() }

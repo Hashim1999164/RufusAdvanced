@@ -39,7 +39,7 @@ final class AppModel: ObservableObject {
     @Published var oldBIOSFixes = false
     @Published var uefiValidation = false
     @Published var persistenceMB: Double = 0
-    @Published var largeWIMStrategy: LargeWIMStrategy = .splitWIM
+    @Published var largeWIMStrategy: LargeWIMStrategy = .ntfsUEFINTFS
     @Published var verifyWrite = false
     @Published var freeDOSKeyboard = FormatWriter.defaultKeyboard()
     @Published var windows: WindowsCustomization = AppSettings.shared.windowsCustomization
@@ -64,6 +64,7 @@ final class AppModel: ObservableObject {
     /// Persistent log (~/Library/Logs/RufusAdvanced), always with the full detail.
     let logFile = LogFile()
     let downloads = DownloadManager()
+    let macInstallers = MacInstallerAssistant()
     let settings = AppSettings.shared
     private var watcher: DiskWatcher?
     private var runner: PrivilegedRunner?
@@ -78,6 +79,7 @@ final class AppModel: ObservableObject {
             DispatchQueue.main.async { self?.appendLog(entry) }
         }
         downloads.onUse = { [weak self] path in self?.selectImage(path: path) }
+        macInstallers.model = self
         watcher = DiskWatcher { [weak self] in Task { @MainActor in self?.refreshDisks() } }
         watcher?.start()
         refreshDisks()
@@ -89,6 +91,9 @@ final class AppModel: ObservableObject {
     }
 
     var isBusy: Bool { state == .running || state == .preparing }
+
+    /// Log entries coming from another helper run (macOS installer assistant).
+    func ingest(_ e: LogEntry) { appendLog(e) }
 
     private func appendLog(_ e: LogEntry) {
         logFile.write(e)

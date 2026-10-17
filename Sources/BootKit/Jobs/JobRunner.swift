@@ -16,6 +16,14 @@ public enum JobRunner {
             logDebug("Helper pid \(getpid()), uid \(getuid()), euid \(geteuid()), macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
             logDebug("Executable: \(CommandLine.arguments.first ?? "?")")
             if let w = AppLocation.warning { logWarning(w) }
+            if spec.operation == .installMacPackage {
+                guard let pkg = spec.imagePath else { throw BootKitError.invalidOption("No package selected") }
+                try MacInstallerLibrary.install(package: pkg, reporter: reporter, cancel: cancel, ownerUID: spec.ownerUID, ownerGID: spec.ownerGID)
+                let elapsed = Units.duration(Date().timeIntervalSince(started))
+                logInfo("Operation completed successfully in \(elapsed).")
+                reporter.emit(.finished(success: true, error: nil, notices: reporter.notices))
+                return true
+            }
             logDebug("Job: disk \(spec.disk) (\(Units.human(spec.diskSize)), \(spec.diskMediaName)), boot \(spec.bootSelection.rawValue), mode \(spec.writeMode.rawValue), scheme \(spec.partitionScheme.rawValue), target \(spec.targetSystem.rawValue), fs \(spec.fileSystem.rawValue), cluster \(spec.clusterSize == 0 ? "default" : String(spec.clusterSize)), quick format \(spec.quickFormat), label '\(spec.label)'")
             if let img = spec.imagePath { logDebug("Image: \(img)") }
             let ctx = try JobContext(spec: spec, reporter: reporter, cancel: cancel)
@@ -67,7 +75,7 @@ public enum JobRunner {
             if spec.operation == .badBlocksOnly { return }
         }
         switch spec.operation {
-        case .badBlocksOnly:
+        case .badBlocksOnly, .installMacPackage:
             return
         case .saveImage:
             try SaveImageJob.run(ctx)

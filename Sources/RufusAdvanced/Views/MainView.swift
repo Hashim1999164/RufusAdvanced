@@ -48,6 +48,7 @@ struct MainView: View {
         .sheet(isPresented: $model.showWindowsSheet) { WindowsCustomizationSheet() }
         .sheet(isPresented: $model.showConfirm) { ConfirmSheet() }
         .sheet(isPresented: $model.showHash) { HashSheet() }
+        .background(MacAssistantSheetHost(assistant: model.macInstallers))
         .alert(item: $model.alert) { a in
             Alert(title: Text(a.title), message: Text(a.message), dismissButton: .default(Text("OK")))
         }
@@ -159,6 +160,7 @@ struct BootSection: View {
                     ImageOptions(image: image)
                 } else {
                     DropHint()
+                    MacInstallersHint(assistant: model.macInstallers)
                 }
             } else if model.bootSelection == .freeDOS {
                 FormRow(label: "Keyboard") {
@@ -172,6 +174,34 @@ struct BootSection: View {
                 InfoLine(text: "Formats the drive for storing files.")
             }
             ForEach(model.recommendationNotes, id: \.self) { n in InfoLine(text: n, systemImage: "lightbulb", color: .secondary) }
+        }
+    }
+}
+
+/// "macOS installers on this Mac: [Install macOS Sequoia 15.6 — Use]" under the drop zone.
+struct MacInstallersHint: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject var assistant: MacInstallerAssistant
+
+    var body: some View {
+        let usable = assistant.installed.filter(\.isUsable)
+        if !usable.isEmpty || assistant.phase.isBusy || assistant.watchingInstallerApp {
+            HStack(spacing: 8) {
+                Image(systemName: "apple.logo").foregroundStyle(.secondary)
+                if assistant.phase.isBusy || assistant.watchingInstallerApp {
+                    ProgressView().controlSize(.small)
+                    Button("macOS installer in progress…") { assistant.showSheet = true }.buttonStyle(.link)
+                } else {
+                    Text("On this Mac:").font(.callout).foregroundStyle(.secondary)
+                    ForEach(usable.prefix(3)) { f in
+                        Button(f.info?.displayName ?? (f.path as NSString).lastPathComponent) { assistant.use(f) }
+                            .controlSize(.small)
+                            .help("Use \(f.path) (verified)")
+                    }
+                    if usable.count > 3 { Button("More…") { assistant.showSheet = true }.buttonStyle(.link) }
+                }
+                Spacer(minLength: 0)
+            }
         }
     }
 }
@@ -201,6 +231,7 @@ struct DownloadMenu: View {
     var body: some View {
         Menu {
             Button { openWindow(id: "downloads"); DownloadCenterState.shared.tab = .macOS } label: { Label("macOS…", systemImage: "apple.logo") }
+            Button { model.macInstallers.showSheet = true } label: { Label("macOS installers on this Mac…", systemImage: "checkmark.seal") }
             Button { openWindow(id: "downloads"); DownloadCenterState.shared.tab = .windows } label: { Label("Windows…", systemImage: "squareshape.split.2x2") }
             Button { openWindow(id: "downloads"); DownloadCenterState.shared.tab = .linux } label: { Label("Linux…", systemImage: "terminal") }
             Button { openWindow(id: "downloads"); DownloadCenterState.shared.tab = .custom } label: { Label("From URL…", systemImage: "link") }
@@ -335,8 +366,7 @@ struct ImageOptions: View {
                     Text("Needs a drive of at least \(Units.human(mac.minimumUSBSize, decimal: true)). The drive is erased as Mac OS Extended (Journaled), GUID.")
                         .font(.caption).foregroundStyle(.secondary)
                     if image.kind == .macInstallerPackage {
-                        Toggle("Also install the installer app in /Applications", isOn: $settings.macInstallToApplications)
-                            .font(.callout)
+                        MacPackageTip(image: image)
                     }
                     if mac.requiresRosetta {
                         InfoLine(text: "This older installer needs Rosetta 2 on Apple silicon.", systemImage: "exclamationmark.triangle.fill", color: .orange)
