@@ -5,12 +5,20 @@ import Foundation
 /// ISOs are attached without auto-mounting and their whole device is mounted explicitly as UDF
 /// (Windows) or ISO9660 (Linux): hybrid ISOs carry an MBR/GPT that otherwise hides the optical
 /// file system from DiskArbitration.
+///
+/// hdiutil hands out the *same* device when an image is already attached (by Finder, the app's scan,
+/// the helper…), so detaching it would pull the image from under the other user (reads then fail with
+/// EIO). ISOs are therefore attached with a private shadow file, which always creates a separate device;
+/// other images that are already attached are reused and never detached by us.
 public final class DiskImageMount {
     public let imagePath: String
     public private(set) var devices: [String] = []
     public private(set) var mountPoints: [String] = []
     public private(set) var primaryMountPoint: String?
     private var ownMount: String?
+    private var shadowPath: String?
+    /// false when we reused somebody else's attachment: leave it attached.
+    private var ownsAttachment = true
     private var detached = false
 
     public init(imagePath: String, mountRoot: String? = nil, optical: Bool? = nil) throws {
@@ -20,7 +28,10 @@ public final class DiskImageMount {
         let isOptical = optical ?? DiskImageMount.looksOptical(imagePath)
 
         if isOptical {
-            let r = try Shell.run("/usr/bin/hdiutil", ["attach", "-readonly", "-nomount", "-noverify", "-noautoopen", "-plist", imagePath])
+            // Private device (see above). Nothing is written: the volume is mounted read-only.
+            let shadow = root + "/shadow-\(UUID().uuidString.prefix(8))"
+            shadowPath = shadow
+            let r = try Shell.run("/usr/bin/hdiutil", ["attach", "-nomount", "-noverify", "-noautoopen", "-shadow", shadow, "-plist", imagePath])
             parseAttach(r)
             guard let dev = wholeDevice else {
                 throw BootKitError.mountFailed("\((imagePath as NSString).lastPathComponent): \(r.combined.trimmingCharacters(in: .whitespacesAndNewlines))")
@@ -54,6 +65,14 @@ public final class DiskImageMount {
             return
         }
 
+        if let existing = DiskImageMount.existingAttachment(of: imagePath), !existing.mountPoints.isEmpty {
+            ownsAttachment = false
+            devices = existing.devices
+            mountPoints = existing.mountPoints
+            primaryMountPoint = DiskImageMount.bestMountPoint(existing.mountPoints)
+            logDebug("Using the existing attachment of \(imagePath) (\(devices.joined(separator: ", "))) at \(mountPoints.joined(separator: ", "))")
+            return
+        }
         let r = try Shell.run("/usr/bin/hdiutil", ["attach", "-readonly", "-nobrowse", "-noverify", "-noautoopen",
                                                     "-mountrandom", root, "-plist", imagePath])
         guard r.ok else {
@@ -79,6 +98,29 @@ public final class DiskImageMount {
             }
         }
         primaryMountPoint = best?.0
+    }
+
+    /// Devices and mount points of an attachment of `path` that already exists (`hdiutil info`).
+    static func existingAttachment(of path: String) -> (devices: [String], mountPoints: [String])? {
+        guard let r = try? Shell.run("/usr/bin/hdiutil", ["info", "-plist"], logCommand: false), r.ok,
+              let data = r.stdout.data(using: .utf8),
+              let plist = try? PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+              let images = plist["images"] as? [[String: Any]] else { return nil }
+        let target = URL(fileURLWithPath: path).resolvingSymlinksInPath().path
+        for img in images {
+            guard let p = img["image-path"] as? String,
+                  URL(fileURLWithPath: p).resolvingSymlinksInPath().path == target,
+                  img["shadow-path"] == nil,
+                  let ents = img["system-entities"] as? [[String: Any]] else { continue }
+            return (ents.compactMap { $0["dev-entry"] as? String }, ents.compactMap { $0["mount-point"] as? String })
+        }
+        return nil
+    }
+
+    static func bestMountPoint(_ mps: [String]) -> String? {
+        mps.max { a, b in
+            ((try? FileManager.default.contentsOfDirectory(atPath: a).count) ?? 0) < ((try? FileManager.default.contentsOfDirectory(atPath: b).count) ?? 0)
+        }
     }
 
     /// UDF volume recognition sequence (NSR02/NSR03) present?
@@ -119,6 +161,8 @@ public final class DiskImageMount {
             _ = try? Shell.run("/sbin/umount", [m], logCommand: false)
             try? FileManager.default.removeItem(atPath: m)
         }
+        defer { if let sp = shadowPath { try? FileManager.default.removeItem(atPath: sp) } }
+        guard ownsAttachment else { return }
         if let dev = wholeDevice {
             var r = try? Shell.run("/usr/bin/hdiutil", ["detach", dev], logCommand: false)
             if r?.ok != true {

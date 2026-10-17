@@ -35,7 +35,32 @@
 
 /* ---------------------------------------------------------------------------------------------
  * Device backend
+ *
+ * USB flash drives are very slow at small synchronous writes, and libntfs-3g issues thousands of
+ * them (MFT records, bitmaps, indexes) plus many small reads. Small I/O therefore goes through a
+ * write-back page cache: pages are read once, modified in memory, and written back sorted and
+ * coalesced on sync/close (or when too many are dirty). Large I/O (file data) goes straight to the
+ * device; cached copies of the pages it covers are kept coherent.
  * ------------------------------------------------------------------------------------------- */
+
+#define RFD_PAGE        4096
+#define RFD_LARGE_IO    (128 * 1024)      /* at least this: direct I/O */
+#define RFD_READAHEAD   16                /* pages loaded together on a miss (64 KB) */
+#define RFD_MAX_PAGES   65536             /* 256 MB of cache, then flush and drop */
+#define RFD_MAX_DIRTY   32768             /* 128 MB dirty, then flush */
+#define RFD_BUCKETS     65536             /* hash buckets (power of two) */
+#define RFD_FLUSH_RUN   256               /* pages per coalesced write (1 MB) */
+
+typedef struct {
+    u64 reads, writes, small_writes, read_bytes, write_bytes, cache_hits, flushes;
+} rfd_stats_t;
+
+typedef struct rfd_page {
+    s64 idx;
+    struct rfd_page *next;
+    int dirty;
+    char *data;
+} rfd_page_t;
 
 typedef struct {
     int fd;
@@ -44,6 +69,10 @@ typedef struct {
     s64 size;
     s64 pos;
     u32 bs;
+    s64 psize;                 /* cache page size: max(RFD_PAGE, bs) */
+    rfd_page_t **buckets;
+    size_t npages, ndirty;
+    rfd_stats_t st;            /* device level I/O */
 } rfd_t;
 
 #define RFD(dev) ((rfd_t *)(dev)->d_private)
@@ -69,23 +98,186 @@ static s64 full_pwrite(int fd, const void *buf, s64 count, s64 off) {
     return count;
 }
 
+/* Device I/O at a partition offset; offset and count are multiples of the block size. */
+static s64 dev_read(rfd_t *p, s64 offset, void *buf, s64 count) {
+    p->st.reads++; p->st.read_bytes += (u64)count;
+    return full_pread(p->fd, buf, count, p->base + offset);
+}
+
+static s64 dev_write(rfd_t *p, s64 offset, const void *buf, s64 count) {
+    p->st.writes++; p->st.write_bytes += (u64)count;
+    if (count < 65536) p->st.small_writes++;
+    return full_pwrite(p->fd, buf, count, p->base + offset);
+}
+
+/* Block aligned direct read of an arbitrary range. */
+static s64 direct_read(rfd_t *p, s64 offset, void *buf, s64 count) {
+    s64 bs = p->bs;
+    if (offset % bs == 0 && count % bs == 0) return dev_read(p, offset, buf, count);
+    s64 start = offset - offset % bs;
+    s64 end = ((offset + count + bs - 1) / bs) * bs;
+    if (end > p->size) end = p->size;
+    char *tmp = NULL;
+    if (posix_memalign((void **)&tmp, 4096, (size_t)(end - start)) != 0) { errno = ENOMEM; return -1; }
+    if (dev_read(p, start, tmp, end - start) < 0) { int e = errno; free(tmp); errno = e; return -1; }
+    memcpy(buf, tmp + (offset - start), (size_t)count);
+    free(tmp);
+    return count;
+}
+
+static inline s64 page_len(rfd_t *p, s64 idx) {
+    s64 left = p->size - idx * p->psize;
+    return left < p->psize ? left : p->psize;
+}
+
+static inline size_t page_hash(s64 idx) {
+    u64 x = (u64)idx * 0x9E3779B97F4A7C15ULL;
+    return (size_t)(x >> 48) & (RFD_BUCKETS - 1);
+}
+
+static rfd_page_t *page_find(rfd_t *p, s64 idx) {
+    for (rfd_page_t *pg = p->buckets[page_hash(idx)]; pg; pg = pg->next)
+        if (pg->idx == idx) return pg;
+    return NULL;
+}
+
+static rfd_page_t *page_insert(rfd_t *p, s64 idx) {
+    rfd_page_t *pg = calloc(1, sizeof(*pg));
+    if (!pg) return NULL;
+    if (posix_memalign((void **)&pg->data, 4096, (size_t)p->psize) != 0) { free(pg); return NULL; }
+    pg->idx = idx;
+    size_t h = page_hash(idx);
+    pg->next = p->buckets[h];
+    p->buckets[h] = pg;
+    p->npages++;
+    return pg;
+}
+
+static int page_cmp(const void *a, const void *b) {
+    s64 x = (*(rfd_page_t * const *)a)->idx, y = (*(rfd_page_t * const *)b)->idx;
+    return x < y ? -1 : x > y;
+}
+
+/* Write every dirty page, sorted and coalesced into runs of consecutive pages. */
+static int cache_flush(rfd_t *p) {
+    if (!p->buckets || p->ndirty == 0) return 0;
+    rfd_page_t **list = malloc(p->ndirty * sizeof(*list));
+    if (!list) { errno = ENOMEM; return -1; }
+    size_t n = 0;
+    for (size_t b = 0; b < RFD_BUCKETS; b++)
+        for (rfd_page_t *pg = p->buckets[b]; pg; pg = pg->next)
+            if (pg->dirty && n < p->ndirty) list[n++] = pg;
+    qsort(list, n, sizeof(*list), page_cmp);
+    char *run = NULL;
+    if (posix_memalign((void **)&run, 4096, (size_t)(p->psize * RFD_FLUSH_RUN)) != 0) { free(list); errno = ENOMEM; return -1; }
+    int rc = 0;
+    size_t i = 0;
+    while (i < n) {
+        size_t j = i;
+        s64 len = 0;
+        while (j < n && j - i < RFD_FLUSH_RUN && list[j]->idx == list[i]->idx + (s64)(j - i)) {
+            s64 l = page_len(p, list[j]->idx);
+            memcpy(run + len, list[j]->data, (size_t)l);
+            len += l;
+            j++;
+        }
+        if (dev_write(p, list[i]->idx * p->psize, run, len) < 0) { rc = -1; break; }
+        for (size_t k = i; k < j; k++) list[k]->dirty = 0;
+        p->ndirty -= j - i;
+        i = j;
+    }
+    p->st.flushes++;
+    free(run);
+    free(list);
+    return rc;
+}
+
+static void cache_drop(rfd_t *p) {
+    if (!p->buckets) return;
+    for (size_t b = 0; b < RFD_BUCKETS; b++) {
+        rfd_page_t *pg = p->buckets[b];
+        while (pg) { rfd_page_t *n = pg->next; free(pg->data); free(pg); pg = n; }
+        p->buckets[b] = NULL;
+    }
+    p->npages = 0;
+    p->ndirty = 0;
+}
+
+/* The cached page, loaded from the device (with read-ahead) unless `whole` says it will be overwritten. */
+static rfd_page_t *page_get(rfd_t *p, s64 idx, int whole) {
+    rfd_page_t *pg = page_find(p, idx);
+    if (pg) { p->st.cache_hits++; return pg; }
+    if (p->npages >= RFD_MAX_PAGES) {
+        if (cache_flush(p) < 0) return NULL;
+        cache_drop(p);
+    }
+    if (whole) {
+        pg = page_insert(p, idx);
+        if (pg) memset(pg->data, 0, (size_t)p->psize);
+        return pg;
+    }
+    /* Read the aligned group of pages around idx in one request; keep cached pages as they are. */
+    s64 first = idx - idx % RFD_READAHEAD;
+    s64 npg = RFD_READAHEAD;
+    s64 maxpg = (p->size + p->psize - 1) / p->psize;
+    if (first + npg > maxpg) npg = maxpg - first;
+    s64 len = (npg - 1) * p->psize + page_len(p, first + npg - 1);
+    char *tmp = NULL;
+    if (posix_memalign((void **)&tmp, 4096, (size_t)len) != 0) { errno = ENOMEM; return NULL; }
+    if (dev_read(p, first * p->psize, tmp, len) < 0) { int e = errno; free(tmp); errno = e; return NULL; }
+    rfd_page_t *want = NULL;
+    for (s64 k = 0; k < npg; k++) {
+        rfd_page_t *q = page_find(p, first + k);
+        if (!q) {
+            q = page_insert(p, first + k);
+            if (!q) { free(tmp); errno = ENOMEM; return NULL; }
+            memcpy(q->data, tmp + k * p->psize, (size_t)page_len(p, first + k));
+        }
+        if (first + k == idx) want = q;
+    }
+    free(tmp);
+    return want;
+}
+
 static s64 rfd_pread(struct ntfs_device *dev, void *buf, s64 count, s64 offset) {
     rfd_t *p = RFD(dev);
     if (offset < 0) { errno = EINVAL; return -1; }
     if (offset >= p->size) return 0;
     if (offset + count > p->size) count = p->size - offset;
     if (count <= 0) return 0;
-    s64 abs = p->base + offset;
-    s64 bs = p->bs;
-    if (abs % bs == 0 && count % bs == 0) return full_pread(p->fd, buf, count, abs);
-    s64 start = abs - abs % bs;
-    s64 end = ((abs + count + bs - 1) / bs) * bs;
-    char *tmp = NULL;
-    if (posix_memalign((void **)&tmp, 4096, (size_t)(end - start)) != 0) { errno = ENOMEM; return -1; }
-    if (full_pread(p->fd, tmp, end - start, start) < 0) { int e = errno; free(tmp); errno = e; return -1; }
-    memcpy(buf, tmp + (abs - start), (size_t)count);
-    free(tmp);
+    s64 first = offset / p->psize, last = (offset + count - 1) / p->psize;
+    if (count >= RFD_LARGE_IO) {
+        if (direct_read(p, offset, buf, count) < 0) return -1;
+        /* Cached pages may be newer than the device. */
+        for (s64 idx = first; idx <= last && p->npages; idx++) {
+            rfd_page_t *pg = page_find(p, idx);
+            if (!pg || !pg->dirty) continue;
+            s64 ps = idx * p->psize, a = offset > ps ? offset : ps;
+            s64 e = offset + count < ps + page_len(p, idx) ? offset + count : ps + page_len(p, idx);
+            memcpy((char *)buf + (a - offset), pg->data + (a - ps), (size_t)(e - a));
+        }
+        return count;
+    }
+    for (s64 idx = first; idx <= last; idx++) {
+        rfd_page_t *pg = page_get(p, idx, 0);
+        if (!pg) return -1;
+        s64 ps = idx * p->psize, a = offset > ps ? offset : ps;
+        s64 e = offset + count < ps + page_len(p, idx) ? offset + count : ps + page_len(p, idx);
+        memcpy((char *)buf + (a - offset), pg->data + (a - ps), (size_t)(e - a));
+    }
     return count;
+}
+
+/* Copy into a cached page (loading it first unless it is overwritten entirely) and mark it dirty. */
+static int cached_write(rfd_t *p, s64 idx, const char *buf, s64 offset, s64 count) {
+    s64 ps = idx * p->psize, plen = page_len(p, idx);
+    s64 a = offset > ps ? offset : ps;
+    s64 e = offset + count < ps + plen ? offset + count : ps + plen;
+    rfd_page_t *pg = page_get(p, idx, a == ps && e == ps + plen);
+    if (!pg) return -1;
+    memcpy(pg->data + (a - ps), buf + (a - offset), (size_t)(e - a));
+    if (!pg->dirty) { pg->dirty = 1; p->ndirty++; }
+    return 0;
 }
 
 static s64 rfd_pwrite(struct ntfs_device *dev, const void *buf, s64 count, s64 offset) {
@@ -96,19 +288,34 @@ static s64 rfd_pwrite(struct ntfs_device *dev, const void *buf, s64 count, s64 o
     if (offset + count > p->size) count = p->size - offset;
     if (count <= 0) return 0;
     NDevSetDirty(dev);
-    s64 abs = p->base + offset;
-    s64 bs = p->bs;
-    if (abs % bs == 0 && count % bs == 0) return full_pwrite(p->fd, buf, count, abs);
-    s64 start = abs - abs % bs;
-    s64 end = ((abs + count + bs - 1) / bs) * bs;
-    char *tmp = NULL;
-    if (posix_memalign((void **)&tmp, 4096, (size_t)(end - start)) != 0) { errno = ENOMEM; return -1; }
-    if (full_pread(p->fd, tmp, end - start, start) < 0) { int e = errno; free(tmp); errno = e; return -1; }
-    memcpy(tmp + (abs - start), buf, (size_t)count);
-    s64 r = full_pwrite(p->fd, tmp, end - start, start);
-    int e = errno;
-    free(tmp);
-    if (r < 0) { errno = e; return -1; }
+    const char *b = buf;
+    s64 first = offset / p->psize, last = (offset + count - 1) / p->psize;
+    if (count >= RFD_LARGE_IO) {
+        /* Whole pages go straight to the device; partial edge pages through the cache. */
+        s64 fs = (offset + p->psize - 1) / p->psize;          /* first whole page */
+        s64 le = (offset + count) / p->psize;                  /* one past the last whole page */
+        if (offset + count == p->size) le = last + 1;          /* short final page counts as whole */
+        if (fs > first && cached_write(p, first, b, offset, count) < 0) return -1;
+        if (le <= last && le >= fs && cached_write(p, last, b, offset, count) < 0) return -1;
+        if (le > fs) {
+            s64 ds = fs * p->psize;
+            s64 de = le * p->psize < p->size ? le * p->psize : p->size;
+            if (dev_write(p, ds, b + (ds - offset), de - ds) < 0) return -1;
+            for (s64 idx = fs; idx < le && p->npages; idx++) {
+                rfd_page_t *pg = page_find(p, idx);
+                if (!pg) continue;
+                memcpy(pg->data, b + (idx * p->psize - offset), (size_t)page_len(p, idx));
+                if (pg->dirty) { pg->dirty = 0; p->ndirty--; }
+            }
+        } else if (fs > le) {
+            /* No whole page at all (spans two partial pages only). */
+            if (last != first && cached_write(p, last, b, offset, count) < 0) return -1;
+        }
+        return count;
+    }
+    for (s64 idx = first; idx <= last; idx++)
+        if (cached_write(p, idx, b, offset, count) < 0) return -1;
+    if (p->ndirty >= RFD_MAX_DIRTY && cache_flush(p) < 0) return -1;
     return count;
 }
 
@@ -136,6 +343,9 @@ static int rfd_open(struct ntfs_device *dev, int flags) {
             size = (s64)(count * bs);
         p->fd = fd; p->owned = 1; p->base = 0; p->size = size; p->bs = bs ? bs : 512;
     }
+    p->psize = p->bs > RFD_PAGE ? p->bs : RFD_PAGE;
+    p->buckets = calloc(RFD_BUCKETS, sizeof(*p->buckets));
+    if (!p->buckets) { if (p->owned) close(p->fd); free(p); errno = ENOMEM; return -1; }
     dev->d_private = p;
     NDevSetOpen(dev);
     if ((flags & O_ACCMODE) == O_RDONLY) NDevSetReadOnly(dev); else NDevClearReadOnly(dev);
@@ -145,6 +355,7 @@ static int rfd_open(struct ntfs_device *dev, int flags) {
 static int rfd_sync(struct ntfs_device *dev) {
     rfd_t *p = RFD(dev);
     if (!NDevReadOnly(dev)) {
+        if (cache_flush(p) < 0) return -1;
         struct stat st;
         if (fstat(p->fd, &st) == 0 && S_ISREG(st.st_mode)) fsync(p->fd);
         else ioctl(p->fd, DKIOCSYNCHRONIZECACHE);
@@ -156,12 +367,21 @@ static int rfd_sync(struct ntfs_device *dev) {
 static int rfd_close(struct ntfs_device *dev) {
     rfd_t *p = RFD(dev);
     if (!p) return 0;
-    if (NDevDirty(dev)) rfd_sync(dev);
+    int rc = 0;
+    if (NDevDirty(dev) || p->ndirty) rc = rfd_sync(dev);
+    if (getenv("RUFUS_NTFS_IOSTATS"))
+        fprintf(stderr, "ntfs-io: %llu device reads (%llu MB), %llu device writes (%llu MB), %llu small writes (<64 KB), %llu cache hits, %llu flushes\n",
+                (unsigned long long)p->st.reads, (unsigned long long)(p->st.read_bytes >> 20),
+                (unsigned long long)p->st.writes, (unsigned long long)(p->st.write_bytes >> 20),
+                (unsigned long long)p->st.small_writes, (unsigned long long)p->st.cache_hits,
+                (unsigned long long)p->st.flushes);
+    cache_drop(p);
+    free(p->buckets);
     if (p->owned) close(p->fd);
     free(p);
     dev->d_private = NULL;
     NDevClearOpen(dev);
-    return 0;
+    return rc;
 }
 
 static s64 rfd_seek(struct ntfs_device *dev, s64 offset, int whence) {
@@ -228,8 +448,12 @@ static void seterr(char *err, size_t errlen, const char *fmt, ...) {
     va_end(ap);
 }
 
+/* Set while an allocation that may legitimately fail (and has a fallback) is attempted. */
+static int expect_alloc_failure = 0;
+
 static int quiet_log(const char *function, const char *file, int line, u32 level, void *data, const char *format, va_list args) {
     (void)function; (void)file; (void)line; (void)data;
+    if (expect_alloc_failure) return 0;
     /* Harmless: ntfs_delete() invalidating a path that was never cached. */
     if (strncmp(format, "Could not delete inode cache entry", 34) == 0) return 0;
     if (level & (NTFS_LOG_LEVEL_ERROR | NTFS_LOG_LEVEL_CRITICAL | NTFS_LOG_LEVEL_PERROR | NTFS_LOG_LEVEL_WARNING)) {
@@ -423,14 +647,22 @@ int rufus_ntfs_write_file(rufus_ntfs *r, const char *path, int srcfd, uint64_t s
     ntfs_inode *ni = NULL;
     ntfs_attr *na = create_file(r, path, &ni, err, errlen);
     if (!na) return -1;
-    /* Allocate the whole file up front so it is as contiguous as possible. */
-    if (size > 0 && ntfs_attr_truncate(na, (s64)size)) {
+    /* Allocate the whole file up front (not sparse): contiguous, and no cluster allocation per chunk.
+     * If there is no single room for it outside the MFT zone, allocate as the data arrives instead
+     * (a failed attempt leaves the attribute unchanged). */
+    int solid = 0;
+    if (size > 0) {
+        expect_alloc_failure = 1;
+        solid = ntfs_attr_truncate_solid(na, (s64)size) == 0;
+        expect_alloc_failure = 0;
+    }
+    if (size > 0 && !solid && ntfs_attr_truncate(na, (s64)size)) {
         int e = errno;
         finish_file(ni, na, path, NULL, 0);
         seterr(err, errlen, "cannot allocate %llu bytes for %s: %s", (unsigned long long)size, path, strerror(e));
         return -1;
     }
-    const size_t chunk = 4 * 1024 * 1024;
+    const size_t chunk = 8 * 1024 * 1024;
     char *buf = malloc(chunk);
     if (!buf) { finish_file(ni, na, path, NULL, 0); seterr(err, errlen, "out of memory"); return -1; }
     uint64_t done = 0;

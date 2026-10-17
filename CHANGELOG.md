@@ -5,6 +5,17 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.1.2] - 2026-10-18
+
+### Fixed
+- **"NTFS: read error on the source of …: Input/output error"** while copying a Windows ISO. When an image was already
+  attached (by Finder, another scan of the same file, or a second app instance), macOS handed out the same device and
+  detaching it afterwards pulled the ISO out from under the running copy. ISOs now get their own private attachment,
+  and images attached by someone else are never detached.
+- **NTFS writes were very slow on real USB drives** (about 4 MB/s). Small metadata I/O now goes through a write-back
+  cache and is written in large sorted batches, and files are allocated in one piece instead of as sparse files: about
+  45,000 synchronous disk operations for a Windows 10 ISO became about 1,700, so copying runs at the drive's speed.
+
 ## [1.1.1] - 2026-10-18
 
 ### Fixed

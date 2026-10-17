@@ -67,8 +67,12 @@ OS specific setup (`WindowsSetup`, `LinuxSetup`, `SyslinuxInstaller`) and finall
 
 macOS can't write NTFS, so `Sources/CNTFS` vendors libntfs-3g and mkntfs (see `Sources/CNTFS/README-ntfs-3g.txt` for
 the exact changes). `rufus_ntfs.c` replaces ntfs-3g's `unix_io` device with one that works on an already open
-descriptor and a byte range (`rufusfd:<fd>:<offset>:<size>:<sector size>`), doing sector-aligned read-modify-write so it
-works on raw character devices, authopen descriptors and disk images alike. mkntfs runs in-process (`mkntfs_main`).
+descriptor and a byte range (`rufusfd:<fd>:<offset>:<size>:<sector size>`), so it works on raw character devices,
+authopen descriptors and disk images alike. I/O smaller than 128 KB goes through a write-back page cache (4 KB pages,
+64 KB read-ahead, flushed sorted and coalesced on sync/close or past 128 MB dirty): USB flash drives are very slow at
+the thousands of small synchronous metadata writes libntfs-3g issues. File data is allocated in one piece
+(`ntfs_attr_truncate_solid`, falling back to on-demand allocation) and written directly in 8 MB chunks.
+mkntfs runs in-process (`mkntfs_main`).
 
 Files can't be copied through a mount, so ISO mode on NTFS uses `NTFSWriter`: everything the OS-specific setup changes
 (Windows customization, Linux config patches, extracted EFI files, uefi-md5sum loaders, md5sum.txt, autorun.inf) is
