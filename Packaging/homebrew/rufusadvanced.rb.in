@@ -4,7 +4,7 @@ cask "rufusadvanced" do
 
   url "https://github.com/Hashim1999164/RufusAdvanced/releases/download/v#{version}/RufusAdvanced-#{version}-macOS.dmg"
   name "RufusAdvanced"
-  desc "Create bootable USB drives for macOS, Windows and Linux (Rufus for macOS)"
+  desc "Bootable USB drive creator with every Rufus option"
   homepage "https://github.com/Hashim1999164/RufusAdvanced"
 
   livecheck do
@@ -12,15 +12,16 @@ cask "rufusadvanced" do
     strategy :github_latest
   end
 
-  depends_on macos: ">= :ventura"
+  depends_on macos: :ventura
 
   app "RufusAdvanced.app"
   binary "#{appdir}/RufusAdvanced.app/Contents/MacOS/rufusadv-helper", target: "rufusadv"
 
   # The app is ad-hoc signed, not notarized: clear the download quarantine so it opens normally.
-  postflight do
-    system_command "/usr/bin/xattr",
-                   args: ["-dr", "com.apple.quarantine", "#{appdir}/RufusAdvanced.app"]
+  postflight_steps do
+    run "/usr/bin/xattr",
+        args:         ["-dr", "com.apple.quarantine", "{{appdir}}/RufusAdvanced.app"],
+        must_succeed: false
   end
 
   zap trash: [
