@@ -1,5 +1,6 @@
 import Foundation
 import BootKit
+import Security
 
 // rufusadv-helper — the worker that touches disks.
 //
@@ -160,6 +161,16 @@ case "list":
     let disks = DiskEnumerator.list(.init(includeUSBHardDrives: flag("--all"), includeDiskImages: flag("--images"), includeOtherExternal: true))
     if flag("--json") { printJSON(disks) } else if disks.isEmpty { print("No removable drives found.") }
     else { for d in disks { print("\(d.identifier)\t\(d.displayName)\t\(d.subtitle)") } }
+
+case "probe":
+    // Read-only check of raw access to a device (authopen when needed).
+    let disk = targetDisk()
+    do {
+        let dev = try RawDevice(path: "/dev/r\(disk.identifier)", writable: false)
+        let mbr = try dev.readBytes(at: 0, count: 512)
+        print("Opened /dev/r\(disk.identifier): \(dev.sectorCount) sectors of \(dev.blockSize) bytes (\(Units.human(dev.size)))")
+        print("MBR signature: \(String(format: "%02X%02X", mbr[510], mbr[511]))")
+    } catch { print("Error: \(error.userMessage)"); exit(1) }
 
 case "inspect":
     guard let path = args.first else { usage() }

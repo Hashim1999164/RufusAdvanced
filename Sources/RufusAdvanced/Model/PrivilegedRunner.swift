@@ -57,9 +57,10 @@ final class PrivilegedRunner: @unchecked Sendable {
         let args = ["run", "--job", job, "--events", eventsPath, "--cancel", cancelPath]
 
         // Disk images and other user-owned devices don't need administrator rights.
-        let needsAdmin = spec.operation == .write && spec.bootSelection == .macInstaller
-            || !userCanWrite("/dev/r\(spec.disk)")
-            || spec.writeMode == .createInstallMedia || spec.writeMode == .asrRestore
+        // Raw disk access goes through authopen (one authorization dialog, no Full Disk Access);
+        // only macOS installers (installer / createinstallmedia) need a root helper.
+        let needsAdmin = spec.operation == .write
+            && (spec.bootSelection == .macInstaller || spec.writeMode == .createInstallMedia || spec.writeMode == .asrRestore)
         if needsAdmin {
             let command = ([helper] + args).map(shellQuote).joined(separator: " ") + " > /dev/null 2>&1 &"
             let script = "do shell script \"\(appleScriptEscape(command))\" with administrator privileges with prompt \"RufusAdvanced needs administrator rights to write to the drive \(spec.diskMediaName) (\(spec.disk)).\""

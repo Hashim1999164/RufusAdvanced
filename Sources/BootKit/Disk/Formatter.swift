@@ -77,29 +77,23 @@ public enum Formatter {
         logInfo("Formatting \(r.slice) as \(r.fileSystem.rawValue) with label '\(label)'\(r.clusterSize > 0 ? ", cluster \(r.clusterSize)" : "")")
 
         switch r.fileSystem {
-        case .fat16, .fat32:
-            var args = ["-F", r.fileSystem == .fat32 ? "32" : "16", "-o", String(hidden), "-h", "255", "-u", "63"]
-            if !label.isEmpty { args += ["-v", label] }
-            if r.clusterSize > 0 { args += ["-c", String(max(1, UInt64(r.clusterSize) / ss))] }
-            if r.fileSystem == .fat32 { args += ["-k", "6", "-i", "1", "-r", "32"] }
-            args.append(rawSlice)
-            try Shell.check("/sbin/newfs_msdos", args, cancel: cancel)
-        case .exfat:
-            var args: [String] = []
-            if !label.isEmpty { args += ["-v", label] }
-            if r.clusterSize > 0 { args += ["-b", String(r.clusterSize)] }
-            args.append(rawSlice)
-            try Shell.check("/sbin/newfs_exfat", args, cancel: cancel)
+        case .fat16, .fat32, .exfat:
+            // In-process formatters: they work on authopen descriptors (newfs_* can't open the device).
+            let dev = try RawDevice(path: rawSlice, writable: true)
+            defer { dev.close() }
+            let opts = FATFormatter.Options(label: label, clusterSize: r.clusterSize, hiddenSectors: hidden)
+            if r.fileSystem == .exfat {
+                try FATFormatter.formatExFAT(dev, offset: 0, size: min(r.partitionSize, dev.size), options: opts, cancel: cancel)
+            } else {
+                try FATFormatter.formatFAT(dev, offset: 0, size: min(r.partitionSize, dev.size), fat32: r.fileSystem == .fat32, options: opts, cancel: cancel)
+            }
         case .udf:
             var args = ["-r", "2.01", "-b", String(max(UInt64(r.clusterSize), ss)), "--wipefs", "no"]
             if !label.isEmpty { args += ["-v", label] }
             args.append(rawSlice)
             try Shell.check("/sbin/newfs_udf", args, cancel: cancel)
         case .hfsPlus:
-            var args = ["-J"]
-            if !label.isEmpty { args += ["-v", label] }
-            args.append(rawSlice)
-            try Shell.check("/sbin/newfs_hfs", args, cancel: cancel)
+            try Shell.check("/usr/sbin/diskutil", ["eraseVolume", "JHFS+", label.isEmpty ? "Untitled" : label, r.slice], cancel: cancel)
         case .apfs:
             try Shell.check("/usr/sbin/diskutil", ["eraseVolume", "APFS", label.isEmpty ? "Untitled" : label, r.slice], cancel: cancel)
         case .ntfs:

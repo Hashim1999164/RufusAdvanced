@@ -18,7 +18,16 @@ public final class RawDevice {
         self.path = path
         let flags = writable ? O_RDWR : O_RDONLY
         fd = open(path, flags | O_CLOEXEC)
-        if fd < 0 { throw BootKitError.openFailed(path, errno) }
+        if fd < 0 {
+            let e = errno
+            // macOS privacy protection (EPERM even as root) or no root (EACCES): go through authopen.
+            if (e == EPERM || e == EACCES) && path.hasPrefix("/dev/") {
+                fd = try DiskAuthorization.shared.open(path, flags: flags)
+                _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
+            } else {
+                throw BootKitError.openFailed(path, e)
+            }
+        }
 
         var st = stat()
         fstat(fd, &st)
