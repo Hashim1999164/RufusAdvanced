@@ -241,7 +241,7 @@ struct ToolsSettings: View {
                     .font(.callout).foregroundStyle(.secondary)
             }
             Section("Tools") {
-                ForEach(ExternalTool.allCases.filter { $0 != .ntfs3g }, id: \.self) { tool in
+                ForEach(ExternalTool.allCases, id: \.self) { tool in
                     HStack(alignment: .top) {
                         Image(systemName: tool.isAvailable ? "checkmark.circle.fill" : "circle.dashed")
                             .foregroundStyle(tool.isAvailable ? .green : .secondary)
@@ -283,7 +283,8 @@ struct AboutView: View {
                     Text("• Boot records from ms-sys (GPLv2+). Syslinux by H. Peter Anvin et al. (GPLv2+). GRUB 2 (GPLv3+). FreeDOS (GPLv2).")
                     Text("• UEFI:NTFS by Pete Batard (GPLv2+), with ntfs-3g and EfiFs drivers. uefi-md5sum by Pete Batard (GPLv2+).")
                     Text("• Windows ISO download method from Fido by Pete Batard (GPLv3).")
-                    Text("• Optional: wimlib (GPLv3/LGPLv3), ntfs-3g, e2fsprogs, zstd, xz, 7-Zip, QEMU.")
+                    Text("• NTFS support: embedded ntfs-3g library and mkntfs by Tuxera and contributors (GPLv2+).")
+                    Text("• Optional: wimlib (GPLv3/LGPLv3), e2fsprogs, zstd, xz, 7-Zip, QEMU.")
                     Text("License: GNU General Public License v3.0").padding(.top, 4)
                 }
                 .font(.caption)

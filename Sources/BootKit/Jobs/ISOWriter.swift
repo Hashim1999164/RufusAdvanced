@@ -17,15 +17,12 @@ public enum ISOWriter {
             let largestIsWim = image.windowsInstallImage != nil && image.largestFilePath == image.windowsInstallImage
             if isWindows && largestIsWim && spec.largeWIMStrategy == .splitWIM {
                 guard ExternalTool.wimlib.isAvailable else {
-                    throw BootKitError.toolMissing(tool: "wimlib-imagex", hint: "Splitting install.wim needs wimlib (brew install wimlib), or choose exFAT + UEFI:NTFS.")
+                    throw BootKitError.toolMissing(tool: "wimlib-imagex", hint: "Splitting install.wim needs wimlib (brew install wimlib), or choose NTFS + UEFI:NTFS.")
                 }
                 splitWIM = true
             } else {
-                throw BootKitError.unsupported("This image contains a file larger than 4 GB (\(image.largestFilePath)), which FAT32 cannot store. Choose exFAT or NTFS.")
+                throw BootKitError.unsupported("This image contains a file larger than 4 GB (\(image.largestFilePath)), which FAT32 cannot store. Choose NTFS (recommended) or exFAT.")
             }
-        }
-        if fs == .ntfs && !ExternalTool.ntfs3g.isAvailable {
-            throw BootKitError.toolMissing(tool: "ntfs-3g", hint: "Copying files to NTFS needs macFUSE + ntfs-3g. Choose exFAT (with UEFI:NTFS) or FAT32 instead.")
         }
         let persistence = image.supportsPersistence && spec.persistenceSize > 0
         let uefiNTFS = (fs == .ntfs || fs == .exfat) && image.hasEFI && !(isWindows && spec.targetSystem == .bios)
@@ -80,13 +77,13 @@ public enum ISOWriter {
         let mount = try DiskImageMount(imagePath: image.path)
         defer { mount.detach() }
         guard let src = mount.primaryMountPoint else { throw BootKitError.mountFailed(image.fileName) }
-        let target: String
         if fs == .ntfs {
-            target = ctx.scratch + "/target"
-            try MediaExtras.mountNTFS(slice: prepared.mainSlice, at: target)
-        } else {
-            target = try prep.mountMain(prepared)
+            try writeNTFS(ctx, image: image, src: src, prepared: prepared, label: label, persistence: persistence)
+            r.begin("Finalizing")
+            if let ps = prepared.slice(.persistence) { DiskUtil.unmount(ps) }
+            return
         }
+        let target = try prep.mountMain(prepared)
         var skip = Set<String>()
         if splitWIM, let wim = image.windowsInstallImage { skip.insert(wim) }
         var opts = FileCopier.Options()
@@ -131,6 +128,49 @@ public enum ISOWriter {
         r.begin("Finalizing", detail: "Flushing data to the drive (this may take a while)")
         prep.unmount(target, slice: prepared.mainSlice)
         if let ps = prepared.slice(.persistence) { DiskUtil.unmount(ps) }
+    }
+
+    /// NTFS: prepare the modified files in an overlay, then write image + overlay through the embedded ntfs-3g.
+    static func writeNTFS(_ ctx: JobContext, image: ImageReport, src: String, prepared: DiskPreparer.Prepared,
+                          label: String, persistence: Bool) throws {
+        let spec = ctx.spec
+        let r = ctx.reporter
+        let w = try NTFSWriter(source: src, scratch: ctx.scratch)
+        if image.family == .windows {
+            if let c = spec.windows, !c.isEmpty {
+                r.begin("Applying Windows customization")
+                w.stage("/sources/appraiserres.dll")
+                w.stage("/setup.exe")
+                if ExternalTool.wimlib.isAvailable && (c.bypassRequirements || c.silentInstall || c.useCA2023Bootloaders) {
+                    w.stage("/sources/boot.wim")
+                }
+                if c.useCA2023Bootloaders {
+                    for a in ["x64", "aa64", "ia32", "arm"] { w.stage("/efi/boot/boot\(a).efi") }
+                    w.stage("/bootmgr.efi")
+                }
+                try WindowsSetup.applyCustomization(c, root: w.overlay, image: image, reporter: r, cancel: ctx.cancel, scratch: ctx.scratch)
+            }
+            WindowsSetup.win7EFIFix(root: w.overlay, image: image, scratch: ctx.scratch, cancel: ctx.cancel, sourceRoot: src)
+        } else {
+            w.stageLinuxConfigs(image)
+            LinuxSetup.extractEFIImageIfNeeded(root: w.overlay, image: image, scratch: ctx.scratch, sourceRoot: src)
+            LinuxSetup.patchConfigs(root: w.overlay, image: image, usbLabel: label, persistence: persistence)
+        }
+        if spec.extendedLabel && !image.hasAutorun { MediaExtras.writeAutorun(root: w.overlay, label: spec.label.isEmpty ? label : spec.label) }
+        if spec.uefiMediaValidation && image.hasEFI { try w.installUEFIMediaValidation(reporter: r, cancel: ctx.cancel) }
+
+        let dev = try RawDevice(path: "/dev/r\(prepared.mainSlice)", writable: true)
+        defer { dev.close() }
+        let vol = try NTFSVolume(device: dev)
+        do {
+            try w.write(to: vol, reporter: r, cancel: ctx.cancel)
+        } catch {
+            try? vol.close()
+            throw error
+        }
+        r.begin("Finalizing", detail: "Writing NTFS metadata")
+        try vol.close()
+        dev.sync()
     }
 
     /// Choose ldlinux.sys / ldlinux.bss matching the ISO's Syslinux version.

@@ -434,9 +434,6 @@ struct FormatSection: View {
                         .help("Minimum size that a block of data will occupy in the file system")
                     }
                 }
-                if model.fileSystem == .ntfs && !ExternalTool.ntfs3g.isAvailable && model.bootSelection == .image {
-                    InfoLine(text: "macOS cannot write NTFS without macFUSE + ntfs-3g.", systemImage: "exclamationmark.triangle.fill", color: .orange)
-                }
             }
             DisclosureGroup(isExpanded: $settings.showAdvancedFormat) {
                 VStack(alignment: .leading, spacing: 8) {

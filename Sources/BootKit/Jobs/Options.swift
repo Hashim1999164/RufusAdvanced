@@ -133,9 +133,9 @@ public enum WriteMode: String, Codable, CaseIterable, Sendable, Identifiable {
 
 /// Strategy for Windows images whose install.wim is larger than 4 GB.
 public enum LargeWIMStrategy: String, Codable, CaseIterable, Sendable, Identifiable {
-    case splitWIM = "FAT32 + split install.wim (best compatibility)"
+    case ntfsUEFINTFS = "NTFS + UEFI:NTFS (recommended, like Rufus)"
+    case splitWIM = "FAT32 + split install.wim (needs wimlib)"
     case exfatUEFINTFS = "exFAT + UEFI:NTFS (UEFI only, Secure Boot off)"
-    case ntfsUEFINTFS = "NTFS + UEFI:NTFS (requires ntfs-3g)"
     public var id: String { rawValue }
 }
 

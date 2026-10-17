@@ -97,14 +97,11 @@ public enum Formatter {
         case .apfs:
             try Shell.check("/usr/sbin/diskutil", ["eraseVolume", "APFS", label.isEmpty ? "Untitled" : label, r.slice], cancel: cancel)
         case .ntfs:
-            guard let mkntfs = ExternalTool.mkntfs.path else {
-                throw BootKitError.toolMissing(tool: "mkntfs", hint: "Install it with: brew install \(ExternalTool.mkntfs.brewFormula)")
-            }
-            var args = ["-Q", "-F", "-p", String(hidden), "-H", "255", "-S", "63", "-s", String(ss)]
-            if !label.isEmpty { args += ["-L", label] }
-            if r.clusterSize > 0 { args += ["-c", String(r.clusterSize)] }
-            args.append(blockSlice)
-            try runDeviceTool(mkntfs, args, device: blockSlice, fs: r.fileSystem, cancel: cancel)
+            // Embedded mkntfs (ntfs-3g) on our own descriptor: no Homebrew tool, works with authopen.
+            let dev = try RawDevice(path: rawSlice, writable: true)
+            defer { dev.close() }
+            try NTFSVolume.format(dev, offset: 0, size: min(r.partitionSize, dev.size), hiddenSectors: hidden,
+                                  clusterSize: r.clusterSize, label: label, quick: true)
         case .ext2, .ext3, .ext4:
             if let mke2fs = ExternalTool.mke2fs.path {
                 var args = ["-F", "-t", r.fileSystem.rawValue, "-m", "0"]

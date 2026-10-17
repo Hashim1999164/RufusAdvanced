@@ -9,11 +9,10 @@ public enum FormatWriter {
         let boot = spec.bootSelection
         var fs = spec.fileSystem
         if boot == .freeDOS && !fs.isFAT { fs = .fat32 }
-        if (boot == .syslinux4 || boot == .syslinux6 || boot == .grub2) && !fs.isFAT && fs != .ntfs { fs = .fat32 }
-        if boot == .uefiNTFS && fs != .ntfs && fs != .exfat { fs = .exfat }
-        if fs == .ntfs && boot != .nonBootable && !ExternalTool.ntfs3g.isAvailable && boot != .uefiNTFS {
-            throw BootKitError.toolMissing(tool: "ntfs-3g", hint: "Choose FAT32 instead.")
-        }
+        // The Syslinux installer patches ldlinux.sys inside a FAT volume.
+        if (boot == .syslinux4 || boot == .syslinux6) && !fs.isFAT { fs = .fat32 }
+        if boot == .grub2 && !fs.isFAT && fs != .ntfs { fs = .fat32 }
+        if boot == .uefiNTFS && fs != .ntfs && fs != .exfat { fs = .ntfs }
 
         r.plan([("Preparing drive", 1), ("Partitioning", 1), ("Formatting", spec.quickFormat ? 3 : 60), ("Installing boot loader", 2), ("Finalizing", 1)])
         let syslinux = boot == .syslinux4 || boot == .syslinux6
@@ -38,9 +37,15 @@ public enum FormatWriter {
         }
         try prep.formatMain(prepared, fileSystem: fs, label: label, pbr: pbr)
 
-        if boot == .nonBootable && fs == .ntfs || boot == .uefiNTFS && fs == .ntfs {
-            // Nothing to copy: leave NTFS unmounted (macOS can't write it natively).
-            if spec.extendedLabel { logWarning("Extended label files are not created on NTFS from macOS.") }
+        if fs == .ntfs {
+            // NTFS isn't writable on macOS: the extended label files go through the embedded ntfs-3g.
+            if spec.extendedLabel {
+                let dev = try RawDevice(path: "/dev/r" + prepared.mainSlice, writable: true)
+                defer { dev.close() }
+                let vol = try NTFSVolume(device: dev)
+                MediaExtras.writeAutorun(to: vol, label: spec.label.isEmpty ? label : spec.label)
+                try vol.close()
+            }
             r.begin("Finalizing")
             return
         }

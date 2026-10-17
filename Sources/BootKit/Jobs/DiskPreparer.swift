@@ -110,6 +110,16 @@ public final class DiskPreparer {
             let sliceDev = try RawDevice(path: "/dev/r\(slice)", writable: true)
             defer { sliceDev.close() }
             try BootRecords.writePBR(sliceDev, partitionOffset: 0, fileSystem: fileSystem, code: pbr)
+            if fileSystem == .ntfs {
+                // Keep the backup boot sector (last sector of the volume) identical to the primary one.
+                let bs = Int(sliceDev.blockSize)
+                let primary = try sliceDev.readBytes(at: 0, count: bs)
+                let sectors = LE.get64(primary, 0x28)
+                let backup = sectors * UInt64(bs)
+                if sectors > 0, backup + UInt64(bs) <= sliceDev.size {
+                    try sliceDev.writeBytes(at: backup, primary)
+                }
+            }
             sliceDev.sync()
         }
     }

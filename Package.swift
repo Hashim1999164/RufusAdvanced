@@ -15,8 +15,20 @@ let package = Package(
             path: "Sources/CBootKit"
         ),
         .target(
+            name: "CNTFS",
+            path: "Sources/CNTFS",
+            exclude: ["COPYING-ntfs-3g.txt", "README-ntfs-3g.txt"],
+            cSettings: [
+                .define("HAVE_CONFIG_H"),
+                .headerSearchPath("ntfs-3g-include"),
+                .headerSearchPath("ntfs-3g-include/ntfs-3g"),
+                .headerSearchPath("ntfsprogs"),
+                .unsafeFlags(["-w"]),
+            ]
+        ),
+        .target(
             name: "BootKit",
-            dependencies: ["CBootKit"],
+            dependencies: ["CBootKit", "CNTFS"],
             path: "Sources/BootKit",
             linkerSettings: [
                 .linkedFramework("DiskArbitration"),

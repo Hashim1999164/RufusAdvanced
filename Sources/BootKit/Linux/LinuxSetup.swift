@@ -92,15 +92,17 @@ public enum LinuxSetup {
 
     /// Some ISOs only carry their EFI bootloaders inside the El Torito EFI image (efi.img /
     /// efiboot.img). Extract its /EFI tree to the target so the USB is UEFI bootable.
-    public static func extractEFIImageIfNeeded(root: String, image: ImageReport, scratch: String) {
+    /// `sourceRoot` is where the EFI image is read from (defaults to `root`); the /EFI tree goes to `root`.
+    public static func extractEFIImageIfNeeded(root: String, image: ImageReport, scratch: String, sourceRoot: String? = nil) {
+        let readRoot = sourceRoot ?? root
         guard image.efiBootloaders.isEmpty, image.hasElToritoEFI else { return }
         let candidates = ["/boot/grub/efi.img", "/isolinux/efiboot.img", "/efi/boot/efiboot.img", "/images/efiboot.img",
                           "/boot/efi.img", "/efiboot.img", "/efi.img", "/boot/grub/efiboot.img", "/efi/efiboot.img"]
         for c in candidates {
-            guard let real = SyslinuxInstaller.resolveCase(c, root: root) else { continue }
+            guard let real = SyslinuxInstaller.resolveCase(c, root: readRoot) else { continue }
             let tmp = scratch + "/efiimg-\(UUID().uuidString.prefix(6)).img"
             do {
-                try FileManager.default.copyItem(atPath: root + real, toPath: tmp)
+                try FileManager.default.copyItem(atPath: readRoot + real, toPath: tmp)
                 let r = try Shell.run("/usr/bin/hdiutil", ["attach", "-readonly", "-nobrowse", "-imagekey", "diskimage-class=CRawDiskImage",
                                                            "-mountrandom", scratch, "-plist", tmp])
                 guard r.ok, let d = r.stdout.data(using: .utf8),

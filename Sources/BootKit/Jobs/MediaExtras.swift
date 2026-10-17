@@ -17,6 +17,19 @@ public enum MediaExtras {
         logInfo("Created autorun.inf (label '\(label)')")
     }
 
+    /// autorun.inf + icon on an NTFS volume (written through the embedded ntfs-3g).
+    public static func writeAutorun(to vol: NTFSVolume, label: String) {
+        guard vol.kind("/autorun.inf") == 0 else { return }
+        let text = "; Created by RufusAdvanced\r\n[autorun]\r\nicon  = autorun.ico\r\nlabel = \(label)\r\n"
+        do {
+            try vol.writeData("/autorun.inf", Data(text.utf8))
+            if let ico = try? BootResources.data("icons/autorun.ico") { try vol.writeData("/autorun.ico", ico) }
+            logInfo("Created autorun.inf (label '\(label)')")
+        } catch {
+            logWarning("Could not create autorun.inf: \(error.userMessage)")
+        }
+    }
+
     /// "Enable runtime UEFI media validation": install uefi-md5sum in front of the original
     /// EFI bootloaders and write an md5sum.txt covering every file of the media.
     public static func installUEFIMediaValidation(root: String, reporter: JobReporter, cancel: CancellationToken) throws {
@@ -67,14 +80,5 @@ public enum MediaExtras {
         let text = "# md5sum_totalbytes = 0x\(String(total, radix: 16))\n" + lines.joined(separator: "\n") + "\n"
         try text.write(toFile: root + "/md5sum.txt", atomically: false, encoding: .utf8)
         logInfo("Installed uefi-md5sum for \(installed.joined(separator: ", ")) and wrote md5sum.txt (\(lines.count) files)")
-    }
-
-    /// Mount an NTFS volume read/write through ntfs-3g (needs macFUSE).
-    public static func mountNTFS(slice: String, at mountPoint: String) throws {
-        guard let tool = ExternalTool.ntfs3g.path else {
-            throw BootKitError.toolMissing(tool: "ntfs-3g", hint: "Writing files to NTFS on a Mac needs macFUSE + ntfs-3g (brew install --cask macfuse; brew install gromgit/fuse/ntfs-3g-mac). Use exFAT or FAT32 instead if you can.")
-        }
-        try FileManager.default.createDirectory(atPath: mountPoint, withIntermediateDirectories: true)
-        try Shell.check(tool, ["/dev/\(slice)", mountPoint, "-o", "local", "-o", "allow_other", "-o", "nobrowse"])
     }
 }

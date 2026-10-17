@@ -147,15 +147,17 @@ public enum WindowsSetup {
     }
 
     /// Windows 7 x64 ISOs have no \efi\boot\bootx64.efi: extract it from install.wim (Rufus "Win7 EFI boot setup").
-    public static func win7EFIFix(root: String, image: ImageReport, scratch: String, cancel: CancellationToken) {
+    /// `sourceRoot` is where install.wim is read from (defaults to `root`).
+    public static func win7EFIFix(root: String, image: ImageReport, scratch: String, cancel: CancellationToken, sourceRoot: String? = nil) {
+        let readRoot = sourceRoot ?? root
         guard image.hasBootmgr, !image.hasEFI, image.wim?.arch == "x64",
               let major = image.wim?.images.first?.major, major == 6,
               let installRel = image.windowsInstallImage,
-              let real = SyslinuxInstaller.resolveCase(installRel, root: root),
+              let real = SyslinuxInstaller.resolveCase(installRel, root: readRoot),
               let w = ExternalTool.wimlib.path else { return }
         let dir = scratch + "/win7efi"
         try? FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-        guard let r = try? Shell.run(w, ["extract", root + real, "1", "/Windows/Boot/EFI/bootmgfw.efi", "--dest-dir=\(dir)", "--no-acls"], cancel: cancel), r.ok else {
+        guard let r = try? Shell.run(w, ["extract", readRoot + real, "1", "/Windows/Boot/EFI/bootmgfw.efi", "--dest-dir=\(dir)", "--no-acls"], cancel: cancel), r.ok else {
             logWarning("Could not extract bootmgfw.efi from install.wim: UEFI boot will not be available")
             return
         }

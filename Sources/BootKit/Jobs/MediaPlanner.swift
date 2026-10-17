@@ -8,11 +8,11 @@ public struct MediaRecommendation: Sendable, Equatable {
     public var target: TargetSystem
     public var fileSystem: FileSystemType
     public var label: String
-    public var largeWIMStrategy: LargeWIMStrategy = .splitWIM
+    public var largeWIMStrategy: LargeWIMStrategy = .ntfsUEFINTFS
     public var notes: [String] = []
 
     public init(writeMode: WriteMode, scheme: PartitionScheme, target: TargetSystem, fileSystem: FileSystemType, label: String,
-                largeWIMStrategy: LargeWIMStrategy = .splitWIM, notes: [String] = []) {
+                largeWIMStrategy: LargeWIMStrategy = .ntfsUEFINTFS, notes: [String] = []) {
         self.writeMode = writeMode
         self.scheme = scheme
         self.target = target
@@ -40,14 +40,10 @@ public enum MediaPlanner {
                 r.notes.append("This Windows image only supports legacy BIOS boot.")
             }
             if image.has4GBFile {
-                if ExternalTool.wimlib.isAvailable {
-                    r.largeWIMStrategy = .splitWIM
-                    r.notes.append("install.wim is larger than 4 GB: it will be split into .swm files so FAT32 can be used (best compatibility).")
-                } else {
-                    r.fileSystem = .exfat
-                    r.largeWIMStrategy = .exfatUEFINTFS
-                    r.notes.append("install.wim is larger than 4 GB and wimlib is not installed: using exFAT + UEFI:NTFS (disable Secure Boot to boot). Install wimlib (brew install wimlib) for FAT32 + split WIM.")
-                }
+                // Like Rufus: NTFS + the (Secure Boot signed) UEFI:NTFS loader, written by the embedded ntfs-3g.
+                r.fileSystem = .ntfs
+                r.largeWIMStrategy = .ntfsUEFINTFS
+                r.notes.append("install.wim is larger than 4 GB (the FAT32 limit): using NTFS + UEFI:NTFS, like Rufus. \(ExternalTool.wimlib.isAvailable ? "FAT32 with a split install.wim is also available." : "")")
             }
             return r
         default:
@@ -59,8 +55,8 @@ public enum MediaPlanner {
                 r.target = .uefi
             }
             if image.has4GBFile {
-                r.fileSystem = .exfat
-                r.notes.append("This image contains a file larger than 4 GB: using exFAT + UEFI:NTFS.")
+                r.fileSystem = .ntfs
+                r.notes.append("This image contains a file larger than 4 GB: using NTFS + UEFI:NTFS.")
             }
             return r
         }
@@ -76,7 +72,7 @@ public enum MediaPlanner {
         case .syslinux4, .syslinux6, .grub2:
             return MediaRecommendation(writeMode: .iso, scheme: .mbr, target: .bios, fileSystem: .fat32, label: boot == .grub2 ? "GRUB" : "SYSLINUX")
         case .uefiNTFS:
-            return MediaRecommendation(writeMode: .iso, scheme: .gpt, target: .uefi, fileSystem: ExternalTool.mkntfs.isAvailable ? .ntfs : .exfat, label: "UEFI_NTFS")
+            return MediaRecommendation(writeMode: .iso, scheme: .gpt, target: .uefi, fileSystem: .ntfs, label: "UEFI_NTFS")
         default:
             return MediaRecommendation(writeMode: .iso, scheme: .mbr, target: .biosOrUefi,
                                        fileSystem: size > 32 * Units.GB ? .exfat : .fat32, label: currentLabel ?? "USB")
@@ -87,22 +83,19 @@ public enum MediaPlanner {
     public static func fileSystems(boot: BootSelection, image: ImageReport?, writeMode: WriteMode) -> [FileSystemType] {
         switch boot {
         case .nonBootable:
-            var list: [FileSystemType] = [.fat32, .exfat, .fat16, .ntfs, .udf, .ext2, .ext3, .ext4, .hfsPlus, .apfs]
-            if !ExternalTool.mkntfs.isAvailable { list.removeAll { $0 == .ntfs } }
-            return list
+            return [.fat32, .exfat, .ntfs, .fat16, .udf, .ext2, .ext3, .ext4, .hfsPlus, .apfs]
         case .freeDOS:
             return [.fat32, .fat16]
         case .syslinux4, .syslinux6, .grub2:
             return [.fat32, .fat16]
         case .uefiNTFS:
-            return ExternalTool.mkntfs.isAvailable ? [.ntfs, .exfat] : [.exfat]
+            return [.ntfs, .exfat]
         case .macInstaller:
             return [.hfsPlus]
         case .image:
             guard let image else { return [.fat32] }
             if writeMode == .dd || image.family == .macOS { return [] }
-            var list: [FileSystemType] = [.fat32, .exfat]
-            if ExternalTool.ntfs3g.isAvailable && ExternalTool.mkntfs.isAvailable { list.append(.ntfs) }
+            var list: [FileSystemType] = [.fat32, .ntfs, .exfat]
             if !image.has4GBFile || image.isWindows { list.insert(.fat16, at: 1) }
             if image.projectedSize > 4 * Units.GB { list.removeAll { $0 == .fat16 } }
             return list

@@ -47,8 +47,6 @@ public enum BootResources {
 /// External command line tools that unlock optional features.
 public enum ExternalTool: String, CaseIterable, Codable, Sendable {
     case wimlib = "wimlib-imagex"
-    case mkntfs = "mkntfs"
-    case ntfs3g = "ntfs-3g"
     case mke2fs = "mke2fs"
     case zstd = "zstd"
     case xz = "xz"
@@ -57,8 +55,6 @@ public enum ExternalTool: String, CaseIterable, Codable, Sendable {
 
     public var path: String? {
         switch self {
-        case .ntfs3g:
-            return Shell.which("ntfs-3g") ?? Shell.which("mount_ntfs-3g")
         case .sevenZip:
             return Shell.which("7z") ?? Shell.which("7zz")
         default:
@@ -71,7 +67,6 @@ public enum ExternalTool: String, CaseIterable, Codable, Sendable {
     public var brewFormula: String {
         switch self {
         case .wimlib: return "wimlib"
-        case .mkntfs, .ntfs3g: return "gromgit/fuse/ntfs-3g-mac"
         case .mke2fs: return "e2fsprogs"
         case .zstd: return "zstd"
         case .xz: return "xz"
@@ -83,8 +78,6 @@ public enum ExternalTool: String, CaseIterable, Codable, Sendable {
     public var purpose: String {
         switch self {
         case .wimlib: return "Split Windows install.wim > 4 GB for FAT32, inject customizations into boot.wim, 'Windows CA 2023' bootloaders"
-        case .mkntfs: return "Format NTFS volumes"
-        case .ntfs3g: return "Write files to NTFS volumes (requires macFUSE)"
         case .mke2fs: return "ext4 file systems (ext2/ext3 are built in)"
         case .zstd: return "Write .zst compressed images"
         case .xz: return "Faster .xz decompression (built-in fallback exists)"
