@@ -13,6 +13,9 @@ struct MainView: View {
             if let v = model.updateAvailable {
                 UpdateBanner(version: v)
             }
+            if let w = AppLocation.warning {
+                LocationBanner(message: w)
+            }
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     DriveSection()
@@ -27,6 +30,8 @@ struct MainView: View {
                 .padding(18)
                 .disabled(model.isBusy)
             }
+            Divider()
+            LogPane()
             Divider()
             StatusBar()
         }
@@ -497,11 +502,16 @@ struct StatusBar: View {
                 VStack(alignment: .leading, spacing: 1) {
                     Text(model.statusLine).font(.callout.weight(.medium)).lineLimit(1).truncationMode(.middle)
                     if let eta = model.etaText { Text(eta).font(.caption).foregroundStyle(.secondary) }
-                    else if !model.notices.isEmpty, model.state == .succeeded {
-                        Text(model.notices.joined(separator: " ")).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                    else if !model.extraNotices.isEmpty, model.state == .succeeded {
+                        Text(model.extraNotices.joined(separator: " ")).font(.caption).foregroundStyle(.secondary).lineLimit(2)
                     }
                 }
                 Spacer()
+                if model.state == .succeeded, !model.finishedMountPoints.isEmpty {
+                    Button("Show in Finder") { model.showDriveInFinder() }
+                        .controlSize(.large)
+                        .help("Open \(model.finishedMountPoints.joined(separator: ", ")) in Finder")
+                }
                 if model.isBusy {
                     Button(role: .cancel) { model.cancel() } label: { Text("Cancel").frame(minWidth: 70) }
                         .controlSize(.large)

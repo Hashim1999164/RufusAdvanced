@@ -13,12 +13,35 @@ public enum JobRunner {
         var errorText: String?
         do {
             logInfo("RufusAdvanced \(BootKit.version) — job started (\(spec.operation.rawValue))")
+            logDebug("Helper pid \(getpid()), uid \(getuid()), euid \(geteuid()), macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
+            logDebug("Executable: \(CommandLine.arguments.first ?? "?")")
+            if let w = AppLocation.warning { logWarning(w) }
+            logDebug("Job: disk \(spec.disk) (\(Units.human(spec.diskSize)), \(spec.diskMediaName)), boot \(spec.bootSelection.rawValue), mode \(spec.writeMode.rawValue), scheme \(spec.partitionScheme.rawValue), target \(spec.targetSystem.rawValue), fs \(spec.fileSystem.rawValue), cluster \(spec.clusterSize == 0 ? "default" : String(spec.clusterSize)), quick format \(spec.quickFormat), label '\(spec.label)'")
+            if let img = spec.imagePath { logDebug("Image: \(img)") }
             let ctx = try JobContext(spec: spec, reporter: reporter, cancel: cancel)
             logInfo("Target: \(ctx.disk.displayName) — \(ctx.disk.subtitle)")
             try runChecked(ctx)
-            if spec.ejectWhenDone && spec.operation != .saveImage {
-                reporter.update(fraction: 1, detail: "Ejecting", force: true)
-                DiskUtil.eject(spec.disk)
+            if spec.operation != .saveImage {
+                if spec.ejectWhenDone {
+                    reporter.update(fraction: 1, detail: "Ejecting", force: true)
+                    if DiskUtil.eject(spec.disk) {
+                        reporter.notice("The drive was ejected and is safe to remove.")
+                        reporter.emit(.driveState(ejected: true, mountPoints: []))
+                    } else {
+                        logWarning("Could not eject \(spec.disk). Eject it from Finder before unplugging it.")
+                        reporter.emit(.driveState(ejected: false, mountPoints: []))
+                    }
+                } else if spec.mountWhenDone && spec.operation == .write {
+                    reporter.update(fraction: 1, detail: "Mounting the drive in Finder", force: true)
+                    let mps = DiskUtil.mountForFinder(spec.disk, cancel: cancel)
+                    if mps.isEmpty {
+                        logWarning("The drive is ready, but macOS did not mount it in Finder. Unplug and reconnect it to see it.")
+                    } else {
+                        for mp in mps { logInfo("Mounted \(spec.disk) at \(mp)") }
+                        reporter.notice("Ready: mounted at \(mps.joined(separator: ", ")).")
+                    }
+                    reporter.emit(.driveState(ejected: false, mountPoints: mps))
+                }
             }
             success = true
         } catch BootKitError.cancelled {

@@ -49,6 +49,9 @@ final class AppModel: ObservableObject {
     @Published var progress: JobProgress?
     @Published var log: [LogEntry] = []
     @Published var notices: [String] = []
+    /// Where the finished drive is mounted in Finder (empty if ejected or not mounted).
+    @Published var finishedMountPoints: [String] = []
+    @Published var driveEjected = false
 
     // MARK: UI
     @Published var alert: Alert?
@@ -58,6 +61,8 @@ final class AppModel: ObservableObject {
     @Published var showSaveImage = false
     @Published var updateAvailable: String?
 
+    /// Persistent log (~/Library/Logs/RufusAdvanced), always with the full detail.
+    let logFile = LogFile()
     let downloads = DownloadManager()
     let settings = AppSettings.shared
     private var watcher: DiskWatcher?
@@ -66,7 +71,9 @@ final class AppModel: ObservableObject {
     private var jobStarted = Date()
 
     init() {
-        Log.shared.verbose = settings.verboseLog
+        // Detailed messages are always produced (and written to the log file); the
+        // "Verbose log" toggle only decides whether they are shown in the log views.
+        Log.shared.verbose = true
         Log.shared.addSink { [weak self] entry in
             DispatchQueue.main.async { self?.appendLog(entry) }
         }
@@ -75,6 +82,8 @@ final class AppModel: ObservableObject {
         watcher?.start()
         refreshDisks()
         logInfo("RufusAdvanced \(BootKit.version) on macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
+        logDebug("App: \(Bundle.main.bundlePath) (uid \(getuid())); log file: \(logFile.url.path)")
+        if let w = AppLocation.warning { logWarning(w) }
         applyRecommendation()
         checkForUpdates()
     }
@@ -82,6 +91,7 @@ final class AppModel: ObservableObject {
     var isBusy: Bool { state == .running || state == .preparing }
 
     private func appendLog(_ e: LogEntry) {
+        logFile.write(e)
         log.append(e)
         if log.count > 20_000 { log.removeFirst(2_000) }
     }
@@ -323,6 +333,8 @@ final class AppModel: ObservableObject {
     }
 
     private func launch(_ spec: JobSpec) {
+        finishedMountPoints = []
+        driveEjected = false
         let runner = PrivilegedRunner { [weak self] event in self?.handle(event) }
         self.runner = runner
         state = .running
@@ -368,6 +380,9 @@ final class AppModel: ObservableObject {
             if let f = p.overall ?? p.fraction {
                 NSApp.dockTile.badgeLabel = "\(Int(f * 100))%"
             }
+        case .driveState(let ejected, let mountPoints):
+            driveEjected = ejected
+            finishedMountPoints = mountPoints
         case .finished(let ok, let err, let n):
             endActivity()
             NSApp.dockTile.badgeLabel = nil
@@ -382,10 +397,15 @@ final class AppModel: ObservableObject {
                 state = .cancelled
                 progress = nil
             } else {
-                state = .failed(err ?? "Unknown error")
+                let message = err ?? "Unknown error"
+                state = .failed(message.split(separator: "\n").first.map(String.init) ?? message)
                 progress = nil
                 NSSound(named: "Basso")?.play()
+                // The status bar has room for one line: show the whole explanation and keep the log open.
+                settings.showLogPane = true
+                alert = Alert(title: "The operation failed", message: message + "\n\nThe log below (and in ~/Library/Logs/RufusAdvanced) has the details.")
             }
+            logFile.flush()
             NSApp.requestUserAttention(.informationalRequest)
             refreshDisks()
         }
@@ -430,6 +450,45 @@ final class AppModel: ObservableObject {
         launch(spec)
     }
 
+    // MARK: - Log export
+
+    /// The whole log as text (verbose lines included, so it is useful for bug reports).
+    var logText: String { log.map(\.formatted).joined(separator: "\n") }
+
+    func copyLog() {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(logText, forType: .string)
+    }
+
+    func saveLog() {
+        let p = NSSavePanel()
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "yyyyMMdd-HHmmss"
+        p.nameFieldStringValue = "rufusadvanced-\(f.string(from: Date())).log"
+        p.allowedContentTypes = [.plainText, .log]
+        if p.runModal() == .OK, let u = p.url {
+            do { try logText.write(to: u, atomically: true, encoding: .utf8) }
+            catch { alert = Alert(title: "Could not save the log", message: error.localizedDescription) }
+        }
+    }
+
+    /// Open the finished drive in Finder.
+    func showDriveInFinder() {
+        guard let mp = finishedMountPoints.first else { return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: mp, isDirectory: true))
+    }
+
+    /// Notices other than the drive state (that one is already the status line).
+    var extraNotices: [String] {
+        notices.filter { !$0.hasPrefix("Ready: mounted at") && !$0.hasPrefix("The drive was ejected") }
+    }
+
+    func revealLogFile() {
+        logFile.flush()
+        NSWorkspace.shared.activateFileViewerSelecting([logFile.url])
+    }
+
     // MARK: - Updates
 
     static let repository = "Hashim1999164/RufusAdvanced"
@@ -463,7 +522,10 @@ final class AppModel: ObservableObject {
         case .running:
             guard let p = progress else { return "Working…" }
             return p.phase + (p.detail.map { " — \($0)" } ?? "")
-        case .succeeded: return "Done. The drive is ready."
+        case .succeeded:
+            if !finishedMountPoints.isEmpty { return "Ready: mounted at \(finishedMountPoints.joined(separator: ", "))" }
+            if driveEjected { return "Done. The drive was ejected and is safe to remove." }
+            return "Done. The drive is ready."
         case .failed(let e): return "Failed: \(e)"
         case .cancelled: return "Cancelled"
         }

@@ -11,11 +11,17 @@ let package = Package(
     ],
     targets: [
         .target(
+            name: "CBootKit",
+            path: "Sources/CBootKit"
+        ),
+        .target(
             name: "BootKit",
+            dependencies: ["CBootKit"],
             path: "Sources/BootKit",
             linkerSettings: [
                 .linkedFramework("DiskArbitration"),
                 .linkedFramework("IOKit"),
+                .linkedFramework("Security"),
                 .linkedLibrary("z"),
             ]
         ),

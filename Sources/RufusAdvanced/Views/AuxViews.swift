@@ -5,44 +5,53 @@ import BootKit
 
 // MARK: - Log
 
-struct LogView: View {
+/// Shared rendering for the log window and the inline log pane.
+struct LogLines: View {
     @EnvironmentObject var model: AppModel
     @ObservedObject var settings = AppSettings.shared
-    @State private var filter = ""
+    var filter: String = ""
+    var maxLines: Int = 5_000
+    var fontSize: CGFloat = 11.5
 
     var entries: [LogEntry] {
-        filter.isEmpty ? model.log : model.log.filter { $0.message.localizedCaseInsensitiveContains(filter) }
+        var list = model.log
+        if !settings.verboseLog { list = list.filter { $0.level != .debug } }
+        if !filter.isEmpty { list = list.filter { $0.message.localizedCaseInsensitiveContains(filter) } }
+        return Array(list.suffix(maxLines))
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack {
-                TextField("Filter", text: $filter).textFieldStyle(.roundedBorder).frame(maxWidth: 240)
-                Toggle("Debug messages", isOn: $settings.verboseLog).onChange(of: settings.verboseLog) { v in Log.shared.verbose = v }
-                Spacer()
-                Button("Copy") { copy() }
-                Button("Save…") { save() }
-                Button("Clear") { model.log.removeAll() }
-            }.padding(10)
-            Divider()
-            ScrollViewReader { proxy in
-                List(entries) { e in
-                    Text(e.formatted)
-                        .font(.system(size: 11.5, design: .monospaced))
-                        .foregroundStyle(color(e.level))
-                        .textSelection(.enabled)
-                        .id(e.id)
-                        .listRowInsets(EdgeInsets(top: 1, leading: 8, bottom: 1, trailing: 8))
+        let shown = entries
+        ScrollViewReader { proxy in
+            ScrollView(.vertical) {
+                LazyVStack(alignment: .leading, spacing: 1) {
+                    ForEach(shown) { e in
+                        Text(e.formatted)
+                            .font(.system(size: fontSize, design: .monospaced))
+                            .foregroundStyle(LogLines.color(e.level))
+                            .lineLimit(nil)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                            .id(e.id)
+                    }
                 }
-                .onChange(of: model.log.count) { _ in
-                    if let last = entries.last { proxy.scrollTo(last.id, anchor: .bottom) }
-                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .onChange(of: model.log.count) { _ in
+                if let last = shown.last { proxy.scrollTo(last.id, anchor: .bottomLeading) }
+            }
+            .onChange(of: settings.verboseLog) { _ in
+                if let last = shown.last { proxy.scrollTo(last.id, anchor: .bottomLeading) }
+            }
+            .onAppear {
+                if let last = shown.last { proxy.scrollTo(last.id, anchor: .bottomLeading) }
             }
         }
-        .frame(minWidth: 640, minHeight: 380)
     }
 
-    func color(_ l: LogLevel) -> Color {
+    static func color(_ l: LogLevel) -> Color {
         switch l {
         case .error: return .red
         case .warning: return .orange
@@ -51,17 +60,101 @@ struct LogView: View {
         case .info: return .primary
         }
     }
+}
 
-    var text: String { model.log.map(\.formatted).joined(separator: "\n") }
+/// Copy / Save / Reveal buttons shared by both log views.
+struct LogButtons: View {
+    @EnvironmentObject var model: AppModel
 
-    func copy() { NSPasteboard.general.clearContents(); NSPasteboard.general.setString(text, forType: .string) }
+    var body: some View {
+        Button("Copy") { model.copyLog() }
+            .help("Copy the whole log (including verbose lines) to the clipboard")
+        Button("Save…") { model.saveLog() }
+            .help("Save the whole log (including verbose lines) to a file")
+        Button { model.revealLogFile() } label: { Image(systemName: "folder") }
+            .help("Show the log file in ~/Library/Logs/RufusAdvanced")
+    }
+}
 
-    func save() {
-        let p = NSSavePanel()
-        let f = DateFormatter(); f.dateFormat = "yyyyMMdd-HHmmss"
-        p.nameFieldStringValue = "rufusadvanced-\(f.string(from: Date())).log"
-        p.allowedContentTypes = [.plainText, .log]
-        if p.runModal() == .OK, let u = p.url { try? text.write(to: u, atomically: true, encoding: .utf8) }
+struct LogView: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject var settings = AppSettings.shared
+    @State private var filter = ""
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack {
+                TextField("Filter", text: $filter).textFieldStyle(.roundedBorder).frame(maxWidth: 240)
+                Toggle("Verbose log", isOn: $settings.verboseLog)
+                    .help("Show every detailed step: devices, diskutil/authopen commands and exit codes, errno values, progress and helper output")
+                Spacer()
+                LogButtons()
+                Button("Clear") { model.log.removeAll() }
+            }.padding(10)
+            Divider()
+            LogLines(filter: filter, maxLines: 20_000)
+        }
+        .frame(minWidth: 640, minHeight: 380)
+    }
+}
+
+/// Collapsible live log at the bottom of the main window.
+struct LogPane: View {
+    @EnvironmentObject var model: AppModel
+    @ObservedObject var settings = AppSettings.shared
+    @Environment(\.openWindow) private var openWindow
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 10) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.15)) { settings.showLogPane.toggle() }
+                } label: {
+                    Label("Log", systemImage: settings.showLogPane ? "chevron.down" : "chevron.right")
+                        .font(.callout.weight(.medium))
+                }
+                .buttonStyle(.borderless)
+                .help(settings.showLogPane ? "Hide the log" : "Show the log")
+                Toggle("Verbose", isOn: $settings.verboseLog)
+                    .toggleStyle(.switch)
+                    .controlSize(.mini)
+                    .help("Show every detailed step: devices, diskutil/authopen commands and exit codes, errno values, progress and helper output")
+                Spacer()
+                if settings.showLogPane {
+                    LogButtons()
+                        .controlSize(.small)
+                    Button { openWindow(id: "log") } label: { Image(systemName: "macwindow") }
+                        .controlSize(.small)
+                        .help("Open the log in its own window")
+                }
+            }
+            .padding(.horizontal, 18)
+            .padding(.vertical, 6)
+            if settings.showLogPane {
+                LogLines(maxLines: 3_000, fontSize: 11)
+                    .frame(minHeight: 120, idealHeight: 180, maxHeight: 260)
+                    .background(Color(nsColor: .textBackgroundColor))
+            }
+        }
+    }
+}
+
+/// Shown when the app runs from a location where macOS won't let it get drive access.
+struct LocationBanner: View {
+    let message: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill").foregroundStyle(.orange)
+            Text(message).font(.callout).fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+            if let p = AppLocation.bundlePath {
+                Button("Show in Finder") { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: p)]) }
+                    .controlSize(.small)
+            }
+        }
+        .padding(.horizontal, 18).padding(.vertical, 8)
+        .background(Color.orange.opacity(0.12))
     }
 }
 

@@ -125,8 +125,15 @@ Only the Xcode Command Line Tools are required. See [docs/ARCHITECTURE.md](docs/
 
 ## FAQ
 
-**Why does it ask for my password?** Writing to a raw disk needs administrator rights on macOS. The app itself runs
-unprivileged and launches its small disk helper with your authorization for the duration of one operation.
+**Why does it ask for my password?** macOS only lets an administrator open a USB drive for raw writing. RufusAdvanced
+asks once per operation through Apple's `authopen` (the same mechanism as balenaEtcher and Raspberry Pi Imager), so no
+Full Disk Access is needed.
+
+**"Could not open /dev/rdiskN: Operation not permitted"?** Move RufusAdvanced.app to **/Applications** and open it from
+there (apps started from Desktop, Documents, Downloads or a disk image can't reliably get drive access), then click
+START and enter your password. If it still fails, enable RufusAdvanced in System Settings › Privacy & Security › Full
+Disk Access. Turn on **Verbose** in the log pane at the bottom of the window to see every step; logs are also saved in
+`~/Library/Logs/RufusAdvanced/`.
 
 **Windows: FAT32 or exFAT?** FAT32 boots everywhere (BIOS, UEFI, Secure Boot). If the image's install.wim is larger
 than 4 GB it is split into `.swm` files (needs wimlib). Without wimlib, exFAT + UEFI:NTFS is used — disable Secure Boot to boot it.

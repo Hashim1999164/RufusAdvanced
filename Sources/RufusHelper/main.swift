@@ -1,5 +1,6 @@
 import Foundation
 import BootKit
+import Security
 
 // rufusadv-helper — the worker that touches disks.
 //
@@ -36,7 +37,8 @@ func usage() -> Never {
       --bad-blocks <passes>        Check for bad blocks first
       --win-bypass / --win-local-account <name> / --win-no-online / --win-no-telemetry / --win-no-bitlocker
       --uefi-validation            Install uefi-md5sum runtime media validation
-      --no-eject                   Keep the drive attached when done
+      --eject                      Eject the drive when done (default: mount it in Finder)
+      --no-mount                   Don't mount the finished drive in Finder
       --allow-images               Allow attached disk images as targets (testing)
       --yes                        Don't ask for confirmation (DANGEROUS)
     """)
@@ -101,6 +103,8 @@ func terminalReporter() -> JobReporter {
                 lastLine = line
                 FileHandle.standardError.write(Data(("\r\u{1B}[K" + String(line.prefix(120))).utf8))
             }
+        case .driveState:
+            break   // also reported as a notice
         case .finished(let ok, let err, let notices):
             FileHandle.standardError.write(Data("\n".utf8))
             for n in notices { print("• \(n)") }
@@ -135,7 +139,8 @@ func applyCommonOptions(_ spec: inout JobSpec, image: ImageReport?) {
     spec.quickFormat = !flag("--slow-format")
     spec.verifyWrite = flag("--verify")
     spec.uefiMediaValidation = flag("--uefi-validation")
-    spec.ejectWhenDone = !flag("--no-eject")
+    spec.ejectWhenDone = flag("--eject")
+    spec.mountWhenDone = !flag("--no-mount")
     spec.allowVirtualDisks = flag("--allow-images")
     if let b = value("--bad-blocks") {
         let set: BadBlocksOptions.PatternSet = ["2": .twoPasses, "slc": .slc, "mlc": .mlc, "tlc": .tlc][b.lowercased()] ?? .onePass
@@ -160,6 +165,16 @@ case "list":
     let disks = DiskEnumerator.list(.init(includeUSBHardDrives: flag("--all"), includeDiskImages: flag("--images"), includeOtherExternal: true))
     if flag("--json") { printJSON(disks) } else if disks.isEmpty { print("No removable drives found.") }
     else { for d in disks { print("\(d.identifier)\t\(d.displayName)\t\(d.subtitle)") } }
+
+case "probe":
+    // Read-only check of raw access to a device (authopen when needed).
+    let disk = targetDisk()
+    do {
+        let dev = try RawDevice(path: "/dev/r\(disk.identifier)", writable: false)
+        let mbr = try dev.readBytes(at: 0, count: 512)
+        print("Opened /dev/r\(disk.identifier): \(dev.sectorCount) sectors of \(dev.blockSize) bytes (\(Units.human(dev.size)))")
+        print("MBR signature: \(String(format: "%02X%02X", mbr[510], mbr[511]))")
+    } catch { print("Error: \(error.userMessage)"); exit(1) }
 
 case "inspect":
     guard let path = args.first else { usage() }

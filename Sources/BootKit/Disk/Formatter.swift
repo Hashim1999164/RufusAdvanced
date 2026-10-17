@@ -77,29 +77,23 @@ public enum Formatter {
         logInfo("Formatting \(r.slice) as \(r.fileSystem.rawValue) with label '\(label)'\(r.clusterSize > 0 ? ", cluster \(r.clusterSize)" : "")")
 
         switch r.fileSystem {
-        case .fat16, .fat32:
-            var args = ["-F", r.fileSystem == .fat32 ? "32" : "16", "-o", String(hidden), "-h", "255", "-u", "63"]
-            if !label.isEmpty { args += ["-v", label] }
-            if r.clusterSize > 0 { args += ["-c", String(max(1, UInt64(r.clusterSize) / ss))] }
-            if r.fileSystem == .fat32 { args += ["-k", "6", "-i", "1", "-r", "32"] }
-            args.append(rawSlice)
-            try Shell.check("/sbin/newfs_msdos", args, cancel: cancel)
-        case .exfat:
-            var args: [String] = []
-            if !label.isEmpty { args += ["-v", label] }
-            if r.clusterSize > 0 { args += ["-b", String(r.clusterSize)] }
-            args.append(rawSlice)
-            try Shell.check("/sbin/newfs_exfat", args, cancel: cancel)
+        case .fat16, .fat32, .exfat:
+            // In-process formatters: they work on authopen descriptors (newfs_* can't open the device).
+            let dev = try RawDevice(path: rawSlice, writable: true)
+            defer { dev.close() }
+            let opts = FATFormatter.Options(label: label, clusterSize: r.clusterSize, hiddenSectors: hidden)
+            if r.fileSystem == .exfat {
+                try FATFormatter.formatExFAT(dev, offset: 0, size: min(r.partitionSize, dev.size), options: opts, cancel: cancel)
+            } else {
+                try FATFormatter.formatFAT(dev, offset: 0, size: min(r.partitionSize, dev.size), fat32: r.fileSystem == .fat32, options: opts, cancel: cancel)
+            }
         case .udf:
             var args = ["-r", "2.01", "-b", String(max(UInt64(r.clusterSize), ss)), "--wipefs", "no"]
             if !label.isEmpty { args += ["-v", label] }
             args.append(rawSlice)
-            try Shell.check("/sbin/newfs_udf", args, cancel: cancel)
+            try runDeviceTool("/sbin/newfs_udf", args, device: rawSlice, fs: r.fileSystem, cancel: cancel)
         case .hfsPlus:
-            var args = ["-J"]
-            if !label.isEmpty { args += ["-v", label] }
-            args.append(rawSlice)
-            try Shell.check("/sbin/newfs_hfs", args, cancel: cancel)
+            try Shell.check("/usr/sbin/diskutil", ["eraseVolume", "JHFS+", label.isEmpty ? "Untitled" : label, r.slice], cancel: cancel)
         case .apfs:
             try Shell.check("/usr/sbin/diskutil", ["eraseVolume", "APFS", label.isEmpty ? "Untitled" : label, r.slice], cancel: cancel)
         case .ntfs:
@@ -110,7 +104,7 @@ public enum Formatter {
             if !label.isEmpty { args += ["-L", label] }
             if r.clusterSize > 0 { args += ["-c", String(r.clusterSize)] }
             args.append(blockSlice)
-            try Shell.check(mkntfs, args, cancel: cancel)
+            try runDeviceTool(mkntfs, args, device: blockSlice, fs: r.fileSystem, cancel: cancel)
         case .ext2, .ext3, .ext4:
             if let mke2fs = ExternalTool.mke2fs.path {
                 var args = ["-F", "-t", r.fileSystem.rawValue, "-m", "0"]
@@ -126,7 +120,7 @@ public enum Formatter {
                 }
                 args.append(blockSlice)
                 defer { if let seedDir { try? FileManager.default.removeItem(atPath: seedDir) } }
-                try Shell.check(mke2fs, args, cancel: cancel)
+                try runDeviceTool(mke2fs, args, device: blockSlice, fs: r.fileSystem, cancel: cancel)
             } else {
                 let device = try RawDevice(path: rawSlice, writable: true)
                 defer { device.close() }
@@ -140,6 +134,22 @@ public enum Formatter {
             }
         }
         progress?(1, "Created \(r.fileSystem.shortName) file system")
+    }
+
+    /// Run an external formatter that opens the device itself. Such tools can't use our authopen
+    /// descriptors, so when macOS refuses them access we explain what to do instead of showing
+    /// the tool's raw "Operation not permitted".
+    static func runDeviceTool(_ tool: String, _ args: [String], device: String, fs: FileSystemType, cancel: CancellationToken?) throws {
+        do {
+            try Shell.check(tool, args, cancel: cancel)
+        } catch BootKitError.commandFailed(let name, let code, let output) {
+            let lower = output.lowercased()
+            if lower.contains("operation not permitted") || lower.contains("permission denied") {
+                throw BootKitError.permissionDenied(path: device, errno: lower.contains("permission denied") ? EACCES : EPERM,
+                                                    detail: "\(name) (exit code \(code)) could not open the partition. \(fs.shortName) is created by an external tool that cannot use RufusAdvanced's drive permission: choose FAT32 or exFAT (large install.wim files are split automatically), or give RufusAdvanced Full Disk Access.")
+            }
+            throw BootKitError.commandFailed(name, code, output)
+        }
     }
 
     /// Zero a region of the device with progress.

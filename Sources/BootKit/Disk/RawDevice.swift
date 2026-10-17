@@ -18,7 +18,23 @@ public final class RawDevice {
         self.path = path
         let flags = writable ? O_RDWR : O_RDONLY
         fd = open(path, flags | O_CLOEXEC)
-        if fd < 0 { throw BootKitError.openFailed(path, errno) }
+        if fd < 0 {
+            let e = errno
+            logDebug("open(\(path), \(writable ? "O_RDWR" : "O_RDONLY")) failed: errno \(e) (\(String(cString: strerror(e))))")
+            // macOS privacy protection (EPERM even as root) or no root (EACCES): go through authopen.
+            if (e == EPERM || e == EACCES) && path.hasPrefix("/dev/") {
+                logDebug("Retrying \(path) through authopen")
+                fd = try DiskAuthorization.shared.open(path, flags: flags)
+                _ = fcntl(fd, F_SETFD, FD_CLOEXEC)
+            } else if e == EPERM || e == EACCES {
+                throw BootKitError.permissionDenied(path: path, errno: e, detail: "open() failed")
+            } else {
+                throw BootKitError.openFailed(path, e)
+            }
+        } else {
+            let opened = fd
+            logDebug("open(\(path), \(writable ? "O_RDWR" : "O_RDONLY")) → fd \(opened)")
+        }
 
         var st = stat()
         fstat(fd, &st)
@@ -33,6 +49,8 @@ public final class RawDevice {
             if ioctl(fd, DKIOCGETBLOCKCOUNT, &count) != 0 { let e = errno; Darwin.close(fd); throw BootKitError.ioctlFailed("block count", e) }
             blockSize = bs == 0 ? 512 : bs
             size = count * UInt64(blockSize)
+            let sizeText = "\(count) sectors × \(bs == 0 ? 512 : bs) bytes = \(Units.human(count * UInt64(bs == 0 ? 512 : bs)))"
+            logDebug("\(path): \(sizeText)")
         }
         // Bypass the unified buffer cache for plain files too (no effect on raw devices).
         _ = fcntl(fd, F_NOCACHE, 1)
@@ -86,7 +104,10 @@ public final class RawDevice {
                 let e = errno
                 if e == EINTR { continue }
                 attempts += 1
-                if attempts > retries { throw BootKitError.writeFailed(path, e) }
+                if attempts > retries {
+                    if e == EPERM || e == EACCES { throw BootKitError.permissionDenied(path: path, errno: e, detail: "write at offset \(offset + UInt64(done)) failed") }
+                    throw BootKitError.writeFailed(path, e)
+                }
                 logWarning("Write error at offset \(offset + UInt64(done)) (\(String(cString: strerror(e)))), retrying…")
                 usleep(useconds_t(500_000 * attempts))
                 continue

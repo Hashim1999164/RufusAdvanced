@@ -92,11 +92,11 @@ public final class FileCopier {
 
     func copyFile(_ from: String, to: String, rel: String) throws {
         let inFD = open(from, O_RDONLY | O_CLOEXEC)
-        if inFD < 0 { throw BootKitError.openFailed(from, errno) }
+        if inFD < 0 { let e = errno; throw BootKitError.fileAccess(from, e, target: false) }
         defer { close(inFD) }
         try? FileManager.default.createDirectory(atPath: (to as NSString).deletingLastPathComponent, withIntermediateDirectories: true)
         let outFD = open(to, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o644)
-        if outFD < 0 { throw BootKitError.openFailed(to, errno) }
+        if outFD < 0 { let e = errno; throw BootKitError.fileAccess(to, e, target: true) }
         defer { close(outFD) }
         _ = fcntl(outFD, F_NOCACHE, 1)
         _ = fcntl(inFD, F_RDAHEAD, 1)
@@ -120,6 +120,7 @@ public final class FileCopier {
                     let e = errno
                     if e == ENOSPC { throw BootKitError.generic("The target drive is full.") }
                     if e == EFBIG { throw BootKitError.unsupported("'\(rel)' is too large for the target file system.") }
+                    if e == EPERM || e == EACCES { throw BootKitError.fileAccess(to, e, target: true) }
                     throw BootKitError.writeFailed(to, e)
                 }
                 written += w
