@@ -67,9 +67,14 @@ public final class DiskAuthorization: @unchecked Sendable {
         let iconPath = BootResources.root.deletingLastPathComponent().appendingPathComponent("AppIcon.icns").path
         let iconC = strdup(iconPath)!
         defer { free(iconC) }
-        var envItems = [AuthorizationItem(name: kAuthorizationEnvironmentPrompt, valueLength: strlen(promptC), value: promptC, flags: 0)]
+        // The item names must outlive AuthorizationCopyRights: keep our own C copies
+        // (passing the Swift String constants directly would leave dangling pointers).
+        let promptKey = strdup(kAuthorizationEnvironmentPrompt)!
+        let iconKey = strdup(kAuthorizationEnvironmentIcon)!
+        defer { free(promptKey); free(iconKey) }
+        var envItems = [AuthorizationItem(name: UnsafePointer(promptKey), valueLength: strlen(promptC), value: promptC, flags: 0)]
         if FileManager.default.fileExists(atPath: iconPath) {
-            envItems.append(AuthorizationItem(name: kAuthorizationEnvironmentIcon, valueLength: strlen(iconC), value: iconC, flags: 0))
+            envItems.append(AuthorizationItem(name: UnsafePointer(iconKey), valueLength: strlen(iconC), value: iconC, flags: 0))
         }
         logInfo("Asking for permission to write to \(disk) (password dialog)…")
         let status: OSStatus = items.withUnsafeMutableBufferPointer { ib in
