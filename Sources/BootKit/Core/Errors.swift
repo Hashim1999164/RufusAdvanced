@@ -59,6 +59,14 @@ public enum BootKitError: Error, LocalizedError, Sendable {
 }
 
 extension BootKitError {
+    /// Error for a file that could not be opened on the mounted image or USB volume, with advice
+    /// when macOS privacy protection (EPERM / EACCES) is the cause.
+    public static func fileAccess(_ path: String, _ e: Int32, target: Bool) -> BootKitError {
+        guard e == EPERM || e == EACCES else { return .openFailed(path, e) }
+        let where_ = target ? "Removable Volumes" : "the folder that holds the image (Downloads, Desktop or Documents)"
+        return .generic("macOS blocked access to \(path) (\(String(cString: strerror(e)))). Open System Settings › Privacy & Security › Files and Folders, allow RufusAdvanced to access \(where_), then try again. Granting Full Disk Access to RufusAdvanced also fixes this.")
+    }
+
     /// Plain-language explanation plus what to do about EPERM / EACCES on a disk device.
     public static func permissionAdvice(path: String, errno e: Int32, detail: String) -> String {
         let reason = e > 0 ? String(cString: strerror(e)) : "authorization failed"
