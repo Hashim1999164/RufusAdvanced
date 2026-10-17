@@ -61,8 +61,65 @@ public enum DiskUtil {
         return (mp?.isEmpty ?? true) ? nil : mp
     }
 
-    public static func eject(_ disk: String) {
-        _ = try? Shell.run(diskutil, ["eject", disk])
+    @discardableResult
+    public static func eject(_ disk: String) -> Bool {
+        (try? Shell.run(diskutil, ["eject", disk]))?.ok ?? false
+    }
+
+    /// Partition slices of a whole disk that currently exist as device nodes, plus the disk itself
+    /// (a DD-written image may carry a file system without a partition table).
+    public static func slices(of disk: String) -> [String] {
+        let names = (try? FileManager.default.contentsOfDirectory(atPath: "/dev")) ?? []
+        let pattern = "^\(NSRegularExpression.escapedPattern(for: disk))s[0-9]+$"
+        let parts = names.filter { $0.range(of: pattern, options: .regularExpression) != nil }
+            .sorted { $0.compare($1, options: .numeric) == .orderedAscending }
+        return parts + [disk]
+    }
+
+    /// True if the volume at `path` is mounted with MNT_DONTBROWSE (hidden from Finder).
+    public static func isHiddenFromFinder(_ path: String) -> Bool {
+        var s = statfs()
+        guard statfs(path, &s) == 0 else { return false }
+        return (UInt32(s.f_flags) & UInt32(MNT_DONTBROWSE)) != 0
+    }
+
+    /// Mounted volumes of `disk` that Finder shows (under /Volumes and not "nobrowse").
+    public static func finderMountPoints(of disk: String) -> [String] {
+        slices(of: disk).compactMap { mountPointOf($0) }
+            .filter { $0.hasPrefix("/Volumes/") && !isHiddenFromFinder($0) }
+    }
+
+    /// After a job: mount the drive's volumes normally so they appear in Finder and on the Desktop.
+    /// Retries for up to `timeout` seconds (DiskArbitration may still be probing the new file
+    /// systems). Returns the Finder-visible mount points; never throws — failures are logged.
+    public static func mountForFinder(_ disk: String, timeout: TimeInterval = 20, cancel: CancellationToken? = nil) -> [String] {
+        // Our private mounts were "nobrowse": release any that are still around first.
+        for slice in slices(of: disk) {
+            if let mp = mountPointOf(slice), !mp.hasPrefix("/Volumes/") || isHiddenFromFinder(mp) {
+                logDebug("\(slice) is still mounted privately at \(mp); unmounting it before remounting for Finder")
+                unmount(slice)
+                if mountPointOf(slice) != nil { unmount(slice, force: true) }
+            }
+        }
+        let deadline = Date().addingTimeInterval(timeout)
+        var attempt = 0
+        while true {
+            attempt += 1
+            if cancel?.isCancelled == true { return finderMountPoints(of: disk) }
+            do {
+                let r = try Shell.run(diskutil, ["mountDisk", disk])
+                if !r.ok {
+                    logDebug("diskutil mountDisk \(disk) (attempt \(attempt)) exited with status \(r.status): \(r.combined.trimmingCharacters(in: .whitespacesAndNewlines))")
+                }
+            } catch {
+                logDebug("diskutil mountDisk \(disk) (attempt \(attempt)) could not run: \(error.userMessage)")
+            }
+            let visible = finderMountPoints(of: disk)
+            if !visible.isEmpty { return visible }
+            logDebug("No Finder-visible volume on \(disk) yet (attempt \(attempt))")
+            if Date() >= deadline { return [] }
+            usleep(1_000_000)
+        }
     }
 
     /// Wait until the given slices (e.g. disk4s1, disk4s2) exist as device nodes.

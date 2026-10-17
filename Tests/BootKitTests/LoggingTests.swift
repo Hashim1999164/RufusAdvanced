@@ -84,6 +84,17 @@ import Testing
         #expect(time == 44101)   // 21<<11 | 34<<5 | 10/2
     }
 
+    @Test func rootVolumeIsNotHidden() {
+        #expect(!DiskUtil.isHiddenFromFinder("/"))
+        #expect(DiskUtil.slices(of: "disk987654").last == "disk987654")
+    }
+
+    @Test func ejectIsOffByDefault() {
+        let s = JobSpec(disk: "disk9", diskSize: 1, diskMediaName: "x")
+        #expect(s.ejectWhenDone == false)
+        #expect(s.mountWhenDone == true)
+    }
+
     @Test func wholeDiskNameAndRights() {
         #expect(DiskAuthorization.wholeDisk(of: "/dev/rdisk9s1") == "disk9")
         #expect(DiskAuthorization.wholeDisk(of: "/dev/disk12") == "disk12")

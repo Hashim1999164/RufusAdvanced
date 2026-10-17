@@ -49,6 +49,9 @@ final class AppModel: ObservableObject {
     @Published var progress: JobProgress?
     @Published var log: [LogEntry] = []
     @Published var notices: [String] = []
+    /// Where the finished drive is mounted in Finder (empty if ejected or not mounted).
+    @Published var finishedMountPoints: [String] = []
+    @Published var driveEjected = false
 
     // MARK: UI
     @Published var alert: Alert?
@@ -330,6 +333,8 @@ final class AppModel: ObservableObject {
     }
 
     private func launch(_ spec: JobSpec) {
+        finishedMountPoints = []
+        driveEjected = false
         let runner = PrivilegedRunner { [weak self] event in self?.handle(event) }
         self.runner = runner
         state = .running
@@ -375,6 +380,9 @@ final class AppModel: ObservableObject {
             if let f = p.overall ?? p.fraction {
                 NSApp.dockTile.badgeLabel = "\(Int(f * 100))%"
             }
+        case .driveState(let ejected, let mountPoints):
+            driveEjected = ejected
+            finishedMountPoints = mountPoints
         case .finished(let ok, let err, let n):
             endActivity()
             NSApp.dockTile.badgeLabel = nil
@@ -465,6 +473,17 @@ final class AppModel: ObservableObject {
         }
     }
 
+    /// Open the finished drive in Finder.
+    func showDriveInFinder() {
+        guard let mp = finishedMountPoints.first else { return }
+        NSWorkspace.shared.open(URL(fileURLWithPath: mp, isDirectory: true))
+    }
+
+    /// Notices other than the drive state (that one is already the status line).
+    var extraNotices: [String] {
+        notices.filter { !$0.hasPrefix("Ready: mounted at") && !$0.hasPrefix("The drive was ejected") }
+    }
+
     func revealLogFile() {
         logFile.flush()
         NSWorkspace.shared.activateFileViewerSelecting([logFile.url])
@@ -503,7 +522,10 @@ final class AppModel: ObservableObject {
         case .running:
             guard let p = progress else { return "Working…" }
             return p.phase + (p.detail.map { " — \($0)" } ?? "")
-        case .succeeded: return "Done. The drive is ready."
+        case .succeeded:
+            if !finishedMountPoints.isEmpty { return "Ready: mounted at \(finishedMountPoints.joined(separator: ", "))" }
+            if driveEjected { return "Done. The drive was ejected and is safe to remove." }
+            return "Done. The drive is ready."
         case .failed(let e): return "Failed: \(e)"
         case .cancelled: return "Cancelled"
         }

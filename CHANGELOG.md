@@ -13,6 +13,12 @@ All notable changes to this project are documented here. The format follows
   from Desktop, Documents, Downloads, a disk image or a translocated location.
 - `diskutil mount` falls back to the default mount point when a private one is refused.
 
+### Changed
+- "Eject the drive when finished" is now off by default (existing settings are reset once). The finished drive is
+  remounted normally so it appears in Finder and on the Desktop; the status bar shows "Ready: mounted at /Volumes/…"
+  with a **Show in Finder** button. When eject is on, the status says the drive was ejected and is safe to remove.
+- CLI: `--eject` to eject (default: mount in Finder), `--no-mount` to leave it unmounted.
+
 ### Added
 - Live log pane in the main window with a **Verbose** toggle, Copy, Save and Show-in-Finder; full detail (commands, exit
   codes, errno, authorization status, progress, helper output) is always written to `~/Library/Logs/RufusAdvanced/`.

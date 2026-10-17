@@ -16,7 +16,7 @@ final class AppSettings: ObservableObject {
     @AppStorage("showDiskImages") var showDiskImages = false
     @AppStorage("showAdvancedDrive") var showAdvancedDrive = false
     @AppStorage("showAdvancedFormat") var showAdvancedFormat = false
-    @AppStorage("ejectWhenDone") var ejectWhenDone = true
+    @AppStorage("ejectWhenDone") var ejectWhenDone = false
     @AppStorage("useRufusMBR") var useRufusMBR = true
     @AppStorage("askWindowsCustomization") var askWindowsCustomization = true
     @AppStorage("macInstallToApplications") var macInstallToApplications = false
@@ -26,6 +26,16 @@ final class AppSettings: ObservableObject {
     @AppStorage("windowsCustomization") var windowsCustomizationData: Data = Data()
     @AppStorage("verboseLog") var verboseLog = false
     @AppStorage("showLogPane") var showLogPane = false
+
+    private init() {
+        // 1.0.x defaulted to ejecting the drive (and stored that value once the toggle was shown).
+        // Since the eject-off default, reset it once so the finished drive shows up in Finder.
+        let d = UserDefaults.standard
+        if !d.bool(forKey: "ejectDefaultOffMigrated") {
+            d.set(false, forKey: "ejectWhenDone")
+            d.set(true, forKey: "ejectDefaultOffMigrated")
+        }
+    }
 
     var windowsCustomization: WindowsCustomization {
         get { (try? JSONDecoder().decode(WindowsCustomization.self, from: windowsCustomizationData)) ?? WindowsCustomization() }

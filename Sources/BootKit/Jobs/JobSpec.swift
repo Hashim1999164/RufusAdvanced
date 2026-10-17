@@ -46,7 +46,9 @@ public struct JobSpec: Codable, Sendable {
     public var largeWIMStrategy: LargeWIMStrategy = .splitWIM
     public var windows: WindowsCustomization?
     public var verifyWrite = false
-    public var ejectWhenDone = true
+    public var ejectWhenDone = false
+    /// When not ejecting: mount the finished volume(s) normally (under /Volumes, visible in Finder).
+    public var mountWhenDone = true
     public var freeDOSKeyboard = "us"
     public var syslinuxFilesDir: String?          // downloaded, signature verified ldlinux.sys/.bss(/.c32)
     public var grubCoreImagePath: String?         // downloaded GRUB core.img matching the ISO
@@ -103,6 +105,8 @@ public enum JobEvent: Codable, Sendable {
     case started(pid: Int32)
     case log(LogEntry)
     case progress(JobProgress)
+    /// State of the drive at the end of a successful job (sent just before `.finished`).
+    case driveState(ejected: Bool, mountPoints: [String])
     case finished(success: Bool, error: String?, notices: [String])
 
     public var jsonLine: String {

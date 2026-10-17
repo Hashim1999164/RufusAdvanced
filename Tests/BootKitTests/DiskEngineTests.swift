@@ -118,7 +118,36 @@ import Testing
         var s = JobSpec(disk: td.disk, diskSize: info.size, diskMediaName: info.mediaName)
         s.allowVirtualDisks = true
         s.ejectWhenDone = false
+        s.mountWhenDone = false     // tests mount the result themselves
         return s
+    }
+
+    @Test func finishedDriveIsMountedForFinder() throws {
+        let td = try TestDisk(sizeMB: 96)
+        defer { td.detach() }
+        var s = try baseSpec(td)
+        s.bootSelection = .nonBootable
+        s.partitionScheme = .mbr
+        s.targetSystem = .biosOrUefi
+        s.fileSystem = .fat32
+        s.label = "RAFINDER"
+        s.mountWhenDone = true
+        var state: (Bool, [String])?
+        var result: (Bool, String?) = (false, nil)
+        let reporter = JobReporter { e in
+            if case .driveState(let ejected, let mps) = e { state = (ejected, mps) }
+            if case .finished(let ok, let err, _) = e { result = (ok, err) }
+        }
+        JobRunner.run(s, reporter: reporter, cancel: CancellationToken())
+        defer { _ = try? Shell.run("/usr/sbin/diskutil", ["unmountDisk", "force", td.disk]) }
+        #expect(result.0, "\(result.1 ?? "")")
+        let st = try #require(state)
+        #expect(st.0 == false)
+        let mp = try #require(st.1.first)
+        #expect(mp.hasPrefix("/Volumes/"))
+        #expect(!DiskUtil.isHiddenFromFinder(mp))
+        #expect(reporter.notices.contains { $0.hasPrefix("Ready: mounted at /Volumes/") })
+        #expect(DiskUtil.finderMountPoints(of: td.disk) == st.1)
     }
 
     @Test func isoModeWithDebianPersistence() throws {

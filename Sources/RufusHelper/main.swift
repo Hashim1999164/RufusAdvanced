@@ -37,7 +37,8 @@ func usage() -> Never {
       --bad-blocks <passes>        Check for bad blocks first
       --win-bypass / --win-local-account <name> / --win-no-online / --win-no-telemetry / --win-no-bitlocker
       --uefi-validation            Install uefi-md5sum runtime media validation
-      --no-eject                   Keep the drive attached when done
+      --eject                      Eject the drive when done (default: mount it in Finder)
+      --no-mount                   Don't mount the finished drive in Finder
       --allow-images               Allow attached disk images as targets (testing)
       --yes                        Don't ask for confirmation (DANGEROUS)
     """)
@@ -102,6 +103,8 @@ func terminalReporter() -> JobReporter {
                 lastLine = line
                 FileHandle.standardError.write(Data(("\r\u{1B}[K" + String(line.prefix(120))).utf8))
             }
+        case .driveState:
+            break   // also reported as a notice
         case .finished(let ok, let err, let notices):
             FileHandle.standardError.write(Data("\n".utf8))
             for n in notices { print("• \(n)") }
@@ -136,7 +139,8 @@ func applyCommonOptions(_ spec: inout JobSpec, image: ImageReport?) {
     spec.quickFormat = !flag("--slow-format")
     spec.verifyWrite = flag("--verify")
     spec.uefiMediaValidation = flag("--uefi-validation")
-    spec.ejectWhenDone = !flag("--no-eject")
+    spec.ejectWhenDone = flag("--eject")
+    spec.mountWhenDone = !flag("--no-mount")
     spec.allowVirtualDisks = flag("--allow-images")
     if let b = value("--bad-blocks") {
         let set: BadBlocksOptions.PatternSet = ["2": .twoPasses, "slc": .slc, "mlc": .mlc, "tlc": .tlc][b.lowercased()] ?? .onePass
