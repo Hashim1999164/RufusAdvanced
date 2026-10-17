@@ -150,5 +150,5 @@ public enum VHD {
 }
 
 public enum BootKit {
-    public static let version = "1.0.0"
+    public static let version = "1.0.1"
 }

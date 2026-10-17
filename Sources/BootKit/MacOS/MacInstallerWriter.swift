@@ -23,7 +23,7 @@ public enum MacInstallerWriter {
         var info = try MacInstallerInspector.inspectApp(app)
         if info.version == nil { info.version = image.mac?.version }
         logInfo("Installer: \(info.displayName) at \(app)")
-        if info.minimumUSBSize > ctx.disk.size + Units.GB {
+        if info.minimumUSBSize > ctx.disk.size {
             throw BootKitError.deviceTooSmall(needed: info.minimumUSBSize, available: ctx.disk.size)
         }
         if info.requiresRosetta && !rosettaInstalled() {

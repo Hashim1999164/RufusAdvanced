@@ -30,7 +30,7 @@ public enum ImageInspector {
                 } else if let text = try? String(contentsOfFile: path + "/" + dist, encoding: .utf8) {
                     let (title, version, build) = AppleCatalog.parseDist(text)
                     r.mac = MacInstallerInfo(appPath: nil, name: title ?? "macOS", version: version, build: build, hasCreateInstallMedia: true,
-                                             needsApplicationPath: true, isLegacyRestore: false, requiresRosetta: false, minimumUSBSize: 8 * Units.GB)
+                                             needsApplicationPath: true, isLegacyRestore: false, requiresRosetta: false, minimumUSBSize: 7_500_000_000)
                 }
                 r.displayName = r.mac?.displayName ?? name
                 return r

@@ -232,7 +232,7 @@ final class AppModel: ObservableObject {
             if image.kind != .compressedDisk && needed > disk.size && image.family != .macOS {
                 return "The image is too big for the selected drive."
             }
-            if let mac = image.mac, mac.minimumUSBSize > disk.size + Units.GB {
+            if let mac = image.mac, mac.minimumUSBSize > disk.size {
                 return "macOS installers need a drive of at least \(Units.human(mac.minimumUSBSize, decimal: true))."
             }
         }
@@ -325,19 +325,28 @@ final class AppModel: ObservableObject {
     private func launch(_ spec: JobSpec) {
         let runner = PrivilegedRunner { [weak self] event in self?.handle(event) }
         self.runner = runner
-        do {
-            state = .running
-            activity = ProcessInfo.processInfo.beginActivity(options: [.idleSystemSleepDisabled, .userInitiated], reason: "Writing to USB drive")
-            try runner.start(spec)
-        } catch {
-            endActivity()
-            state = .ready
-            progress = nil
-            if case PrivilegedRunner.RunError.authorizationCancelled = error {
-                logWarning(error.localizedDescription)
-            } else {
-                alert = Alert(title: "Could not start", message: error.localizedDescription)
+        state = .running
+        progress = JobProgress(phase: "Waiting for administrator authorization…")
+        activity = ProcessInfo.processInfo.beginActivity(options: [.idleSystemSleepDisabled, .userInitiated], reason: "Writing to USB drive")
+        // The authorization prompt is modal in another process: never block the main thread on it.
+        Task.detached {
+            do {
+                try runner.start(spec)
+            } catch {
+                await MainActor.run { self.launchFailed(error) }
             }
+        }
+    }
+
+    private func launchFailed(_ error: Error) {
+        endActivity()
+        runner = nil
+        state = .ready
+        progress = nil
+        if case PrivilegedRunner.RunError.authorizationCancelled = error {
+            logWarning(error.localizedDescription)
+        } else {
+            alert = Alert(title: "Could not start", message: error.localizedDescription)
         }
     }
 

@@ -69,7 +69,7 @@ public enum MacInstallerInspector {
             needsApplicationPath: hasCIM && versionLess(major, "10.14"),
             isLegacyRestore: legacyRestore,
             requiresRosetta: needsRosetta,
-            minimumUSBSize: versionLess(major, "11") ? 8 * Units.GB : 16 * Units.GB)
+            minimumUSBSize: versionLess(major, "11") ? 7_500_000_000 : 14_000_000_000)
     }
 
     /// Read OSVersion/Build from SharedSupport.dmg (macOS 11+).
@@ -104,7 +104,7 @@ public enum MacInstallerInspector {
             needsApplicationPath: major.map { versionLess($0, "10.14") } ?? legacy,
             isLegacyRestore: major.map { versionLess($0, "10.9") } ?? false,
             requiresRosetta: false,
-            minimumUSBSize: (major.map { versionLess($0, "11") } ?? legacy) ? 8 * Units.GB : 16 * Units.GB)
+            minimumUSBSize: (major.map { versionLess($0, "11") } ?? legacy) ? 7_500_000_000 : 14_000_000_000)
     }
 
     /// Apple's legacy InstallMacOSX.dmg / InstallOS.dmg, or a DMG containing an installer app.

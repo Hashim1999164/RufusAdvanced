@@ -3,6 +3,12 @@
 All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and the project uses [Semantic Versioning](https://semver.org/).
 
+## [1.0.1] - 2026-10-17
+
+### Fixed
+- The app no longer freezes while the administrator password prompt is shown.
+- macOS installer media: accept "16 GB" (and "8 GB" for older releases) drives, using Apple's decimal size requirements.
+
 ## [1.0.0] - 2026-10-17
 
 First public release.

@@ -53,7 +53,7 @@ public struct MacOSRelease: Identifiable, Codable, Hashable, Sendable {
             needsApplicationPath: MacInstallerInspector.versionLess(major, "10.14"),
             isLegacyRestore: MacInstallerInspector.versionLess(major, "10.9"),
             requiresRosetta: false,
-            minimumUSBSize: MacInstallerInspector.versionLess(major, "11") ? 8 * Units.GB : 16 * Units.GB)
+            minimumUSBSize: MacInstallerInspector.versionLess(major, "11") ? 7_500_000_000 : 14_000_000_000)
     }
 }
 
