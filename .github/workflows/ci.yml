@@ -31,7 +31,7 @@ jobs:
       - name: Build app bundle (arm64)
         run: ARCHS=arm64 scripts/build-app.sh
       - name: Upload app
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: RufusAdvanced-${{ github.sha }}
           path: dist/*.zip
