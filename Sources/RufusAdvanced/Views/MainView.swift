@@ -13,9 +13,7 @@ struct MainView: View {
             if let v = model.updateAvailable {
                 UpdateBanner(version: v)
             }
-            if let w = AppLocation.warning {
-                LocationBanner(message: w)
-            }
+            PermissionBanner(manager: model.permissions)
             if settings.simpleMode {
                 SimpleFlowView()
                     .transition(.opacity)
@@ -38,6 +36,11 @@ struct MainView: View {
         .sheet(isPresented: $model.showConfirm) { ConfirmSheet() }
         .sheet(isPresented: $model.showHash) { HashSheet() }
         .background(MacAssistantSheetHost(assistant: model.macInstallers))
+        .background(PermissionsSheetHost(manager: model.permissions))
+        .onAppear {
+            // Let the window appear first, then show what is missing.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { model.permissions.checkAtLaunch() }
+        }
         .alert(item: $model.alert) { a in
             if let url = a.settingsURL {
                 return Alert(title: Text(a.title), message: Text(a.message),
@@ -97,6 +100,7 @@ struct MainView: View {
             .disabled(model.isBusy)
         }
         ToolbarItemGroup(placement: .primaryAction) {
+            PermissionsToolbarButton(manager: model.permissions)
             Button { openWindow(id: "downloads") } label: { Label("Download Center", systemImage: "arrow.down.circle") }
                 .help("Download macOS, Windows and Linux directly from their official servers")
             Button { model.showHash = true } label: { Label("Checksums", systemImage: "number.square") }

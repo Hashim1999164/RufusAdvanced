@@ -5,6 +5,15 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-10-18
+
+### Added
+- **Permission check at launch.** RufusAdvanced checks what it needs from macOS every time it starts — running from
+  Applications, Full Disk Access (needed for macOS installers), access to the download folder, an administrator
+  account, and wimlib for FAT32 Windows drives — and lists anything missing with a one-click fix (Open Settings, Show in
+  Finder, Copy command). The list refreshes when you come back from System Settings; a banner and a toolbar shield show
+  remaining problems, and **RufusAdvanced › Permissions…** opens it any time.
+
 ## [1.2.0] - 2026-10-18
 
 ### Added

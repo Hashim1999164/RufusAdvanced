@@ -67,6 +67,7 @@ final class AppModel: ObservableObject {
     let logFile = LogFile()
     let downloads = DownloadManager()
     let macInstallers = MacInstallerAssistant()
+    let permissions = PermissionManager()
     let settings = AppSettings.shared
     private var watcher: DiskWatcher?
     private var runner: PrivilegedRunner?

@@ -29,6 +29,8 @@ final class AppSettings: ObservableObject {
     @AppStorage("showLogPane") var showLogPane = false
     /// Simple (guided, default) or Advanced (every Rufus option) main window.
     @AppStorage("simpleMode") var simpleMode = true
+    /// Show the permission check at launch when something needs attention.
+    @AppStorage("showPermissionsAtLaunch") var showPermissionsAtLaunch = true
 
     private init() {
         // 1.0.x defaulted to ejecting the drive (and stored that value once the toggle was shown).

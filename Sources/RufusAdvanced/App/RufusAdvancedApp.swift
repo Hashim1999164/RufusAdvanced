@@ -21,6 +21,7 @@ struct RufusAdvancedApp: App {
         .commands {
             CommandGroup(replacing: .appInfo) {
                 Button("About RufusAdvanced") { delegate.showAbout() }
+                Button("Permissions…") { model.permissions.refresh(); model.permissions.showSheet = true }
             }
             CommandGroup(replacing: .newItem) {
                 Button("Open Image…") { model.chooseImage() }.keyboardShortcut("o")
