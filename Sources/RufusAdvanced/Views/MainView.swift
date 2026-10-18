@@ -73,7 +73,7 @@ struct MainView: View {
             Divider()
             StatusBar()
         }
-        .frame(minWidth: 560, idealWidth: 600, minHeight: 640, idealHeight: 820)
+        .frame(minWidth: 560, idealWidth: 600, maxWidth: 760, minHeight: 600, idealHeight: 760, maxHeight: 900)
     }
 
     @ViewBuilder var dropOverlay: some View {

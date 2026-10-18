@@ -5,6 +5,13 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.2] - 2026-10-19
+
+### Fixed
+- The main window could open extremely tall (the whole screen height), pushing the Create USB button out of reach. The
+  window now has sensible bounds: Simple mode opens at 560 × 620 and never grows beyond 680 × 760; Advanced mode is
+  capped at 760 × 900.
+
 ## [1.2.1] - 2026-10-18
 
 ### Added

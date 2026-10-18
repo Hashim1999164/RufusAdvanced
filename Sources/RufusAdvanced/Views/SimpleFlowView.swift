@@ -32,7 +32,7 @@ struct SimpleFlowView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .animation(.spring(response: 0.45, dampingFraction: 0.86), value: step)
         }
-        .frame(minWidth: 540, idealWidth: 560, minHeight: 700, idealHeight: 740)
+        .frame(minWidth: 540, idealWidth: 560, maxWidth: 680, minHeight: 540, idealHeight: 620, maxHeight: 760)
     }
 
     var stepTransition: AnyTransition {
