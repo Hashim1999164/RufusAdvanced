@@ -27,6 +27,8 @@ final class AppSettings: ObservableObject {
     @AppStorage("windowsCustomization") var windowsCustomizationData: Data = Data()
     @AppStorage("verboseLog") var verboseLog = false
     @AppStorage("showLogPane") var showLogPane = false
+    /// Simple (guided, default) or Advanced (every Rufus option) main window.
+    @AppStorage("simpleMode") var simpleMode = true
 
     private init() {
         // 1.0.x defaulted to ejecting the drive (and stored that value once the toggle was shown).

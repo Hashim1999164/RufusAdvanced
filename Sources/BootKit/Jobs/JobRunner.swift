@@ -16,6 +16,9 @@ public enum JobRunner {
             logDebug("Helper pid \(getpid()), uid \(getuid()), euid \(geteuid()), macOS \(ProcessInfo.processInfo.operatingSystemVersionString)")
             logDebug("Executable: \(CommandLine.arguments.first ?? "?")")
             if let w = AppLocation.warning { logWarning(w) }
+            if let r = Privacy.responsibleProcess() {
+                logDebug("Responsible process (its privacy permissions apply): \(r.path) (pid \(r.pid)); Full Disk Access: \(Privacy.hasFullDiskAccess().map { $0 ? "yes" : "no" } ?? "unknown")")
+            }
             if spec.operation == .installMacPackage {
                 guard let pkg = spec.imagePath else { throw BootKitError.invalidOption("No package selected") }
                 try MacInstallerLibrary.install(package: pkg, reporter: reporter, cancel: cancel, ownerUID: spec.ownerUID, ownerGID: spec.ownerGID)
@@ -181,5 +184,5 @@ public enum VHD {
 }
 
 public enum BootKit {
-    public static let version = "1.1.2"
+    public static let version = "1.2.0"
 }

@@ -7,6 +7,8 @@ can format NTFS and copy files to it without macFUSE. Changes from upstream:
   descriptor and a byte range (authopen descriptors of raw disks), with sector aligned read-modify-write.
   Small I/O goes through a write-back page cache (written back sorted and coalesced on sync/close)
   because USB flash drives are very slow at the many small synchronous writes libntfs-3g issues.
+- libntfs-3g/lcnalloc.c: NTFS_LCNALLOC_SKIP is 0 instead of 4096 clusters, so files written one after the
+  other are allocated next to each other (they never grow afterwards) instead of 16 MB apart.
 - ntfsprogs/mkntfs.c: main() renamed to mkntfs_main() so it can run in-process; mkntfs_cleanup() also
   resets g_allocation and frees g_upcaseinfo so it can run more than once per process.
 - Volumes are opened in ignore-case mode (ntfs_set_ignore_case) so lookups behave like Windows. New names

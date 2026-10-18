@@ -53,7 +53,10 @@
  * formula as the function of the number of extents (fragments, runs).
  */
 #define NTFS_LCNALLOC_BSIZE 4096
-#define NTFS_LCNALLOC_SKIP  NTFS_LCNALLOC_BSIZE
+/* RufusAdvanced: upstream skips NTFS_LCNALLOC_BSIZE (4096) clusters after every allocation to
+ * leave room for growing files. Files are written once at their final size here, and that skip
+ * scattered them 16 MB apart, turning the copy into thousands of random writes on flash drives. */
+#define NTFS_LCNALLOC_SKIP  0
 
 enum {
 	ZONE_MFT = 1,

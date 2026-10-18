@@ -16,6 +16,41 @@ struct MainView: View {
             if let w = AppLocation.warning {
                 LocationBanner(message: w)
             }
+            if settings.simpleMode {
+                SimpleFlowView()
+                    .transition(.opacity)
+            } else {
+                advanced
+                    .transition(.opacity)
+            }
+        }
+        .animation(.easeInOut(duration: 0.25), value: settings.simpleMode)
+        .overlay(dropOverlay)
+        .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
+            guard !model.isBusy, let p = providers.first else { return false }
+            _ = p.loadObject(ofClass: URL.self) { url, _ in
+                if let url { DispatchQueue.main.async { model.selectImage(path: url.path) } }
+            }
+            return true
+        }
+        .toolbar { toolbar }
+        .sheet(isPresented: $model.showWindowsSheet) { WindowsCustomizationSheet() }
+        .sheet(isPresented: $model.showConfirm) { ConfirmSheet() }
+        .sheet(isPresented: $model.showHash) { HashSheet() }
+        .background(MacAssistantSheetHost(assistant: model.macInstallers))
+        .alert(item: $model.alert) { a in
+            if let url = a.settingsURL {
+                return Alert(title: Text(a.title), message: Text(a.message),
+                             primaryButton: .default(Text("Open Settings")) { NSWorkspace.shared.open(url) },
+                             secondaryButton: .cancel(Text("OK")))
+            }
+            return Alert(title: Text(a.title), message: Text(a.message), dismissButton: .default(Text("OK")))
+        }
+    }
+
+    /// Advanced mode: every Rufus option.
+    var advanced: some View {
+        VStack(spacing: 0) {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     DriveSection()
@@ -36,22 +71,6 @@ struct MainView: View {
             StatusBar()
         }
         .frame(minWidth: 560, idealWidth: 600, minHeight: 640, idealHeight: 820)
-        .overlay(dropOverlay)
-        .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { providers in
-            guard let p = providers.first else { return false }
-            _ = p.loadObject(ofClass: URL.self) { url, _ in
-                if let url { DispatchQueue.main.async { model.selectImage(path: url.path) } }
-            }
-            return true
-        }
-        .toolbar { toolbar }
-        .sheet(isPresented: $model.showWindowsSheet) { WindowsCustomizationSheet() }
-        .sheet(isPresented: $model.showConfirm) { ConfirmSheet() }
-        .sheet(isPresented: $model.showHash) { HashSheet() }
-        .background(MacAssistantSheetHost(assistant: model.macInstallers))
-        .alert(item: $model.alert) { a in
-            Alert(title: Text(a.title), message: Text(a.message), dismissButton: .default(Text("OK")))
-        }
     }
 
     @ViewBuilder var dropOverlay: some View {
@@ -66,6 +85,17 @@ struct MainView: View {
     }
 
     @ToolbarContentBuilder var toolbar: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            Picker("Mode", selection: $settings.simpleMode) {
+                Text("Simple").tag(true)
+                Text("Advanced").tag(false)
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 170)
+            .help("Simple: guided and automatic. Advanced: every Rufus option.")
+            .disabled(model.isBusy)
+        }
         ToolbarItemGroup(placement: .primaryAction) {
             Button { openWindow(id: "downloads") } label: { Label("Download Center", systemImage: "arrow.down.circle") }
                 .help("Download macOS, Windows and Linux directly from their official servers")
@@ -367,6 +397,13 @@ struct ImageOptions: View {
                         .font(.caption).foregroundStyle(.secondary)
                     if image.kind == .macInstallerPackage {
                         MacPackageTip(image: image)
+                    }
+                    if Privacy.hasFullDiskAccess() == false {
+                        HStack(alignment: .top, spacing: 6) {
+                            InfoLine(text: "Recommended: give RufusAdvanced Full Disk Access so createinstallmedia can write to the USB drive.",
+                                     systemImage: "lock.shield", color: .orange)
+                            Button("Open Settings") { NSWorkspace.shared.open(Privacy.fullDiskAccessSettingsURL) }.controlSize(.small)
+                        }
                     }
                     if mac.requiresRosetta {
                         InfoLine(text: "This older installer needs Rosetta 2 on Apple silicon.", systemImage: "exclamationmark.triangle.fill", color: .orange)

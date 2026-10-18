@@ -8,11 +8,11 @@ public struct MediaRecommendation: Sendable, Equatable {
     public var target: TargetSystem
     public var fileSystem: FileSystemType
     public var label: String
-    public var largeWIMStrategy: LargeWIMStrategy = .ntfsUEFINTFS
+    public var largeWIMStrategy: LargeWIMStrategy = .splitWIM
     public var notes: [String] = []
 
     public init(writeMode: WriteMode, scheme: PartitionScheme, target: TargetSystem, fileSystem: FileSystemType, label: String,
-                largeWIMStrategy: LargeWIMStrategy = .ntfsUEFINTFS, notes: [String] = []) {
+                largeWIMStrategy: LargeWIMStrategy = .splitWIM, notes: [String] = []) {
         self.writeMode = writeMode
         self.scheme = scheme
         self.target = target
@@ -40,10 +40,17 @@ public enum MediaPlanner {
                 r.notes.append("This Windows image only supports legacy BIOS boot.")
             }
             if image.has4GBFile {
-                // Like Rufus: NTFS + the (Secure Boot signed) UEFI:NTFS loader, written by the embedded ntfs-3g.
-                r.fileSystem = .ntfs
-                r.largeWIMStrategy = .ntfsUEFINTFS
-                r.notes.append("install.wim is larger than 4 GB (the FAT32 limit): using NTFS + UEFI:NTFS, like Rufus. \(ExternalTool.wimlib.isAvailable ? "FAT32 with a split install.wim is also available." : "")")
+                if ExternalTool.wimlib.isAvailable {
+                    // FAT32 boots everywhere (BIOS, UEFI, Secure Boot, Macs): split install.wim into < 4 GB parts.
+                    r.fileSystem = .fat32
+                    r.largeWIMStrategy = .splitWIM
+                    r.notes.append("install.wim is larger than 4 GB (the FAT32 limit): it will be split into parts so FAT32 can be used (boots everywhere). NTFS + UEFI:NTFS is also available.")
+                } else {
+                    // Like Rufus: NTFS + the (Secure Boot signed) UEFI:NTFS loader, written by the embedded ntfs-3g.
+                    r.fileSystem = .ntfs
+                    r.largeWIMStrategy = .ntfsUEFINTFS
+                    r.notes.append("install.wim is larger than 4 GB (the FAT32 limit): using NTFS + UEFI:NTFS, like Rufus. Install wimlib (brew install wimlib) to use FAT32 with a split install.wim instead.")
+                }
             }
             return r
         default:

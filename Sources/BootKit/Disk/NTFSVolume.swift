@@ -37,6 +37,25 @@ public final class NTFSVolume {
         }
     }
 
+    final class FlushBox {
+        let callback: (Int, UInt64, UInt64) -> Void
+        init(_ c: @escaping (Int, UInt64, UInt64) -> Void) { callback = c }
+    }
+
+    /// Close, reporting progress while cached metadata is written back (stage 0, done/total bytes)
+    /// and while the drive flushes its own write cache (stage 1). Can take a while on USB drives.
+    public func close(progress: @escaping (_ stage: Int, _ done: UInt64, _ total: UInt64) -> Void) throws {
+        guard let h = handle else { return }
+        let box = FlushBox(progress)
+        let ctx = Unmanaged.passRetained(box).toOpaque()
+        defer { Unmanaged<FlushBox>.fromOpaque(ctx).release() }
+        rufus_ntfs_set_flush_progress(h, { ctx, stage, done, total in
+            guard let ctx else { return }
+            Unmanaged<FlushBox>.fromOpaque(ctx).takeUnretainedValue().callback(Int(stage), done, total)
+        }, ctx)
+        try close()
+    }
+
     /// 0 = missing, 1 = file, 2 = directory.
     public func kind(_ path: String) -> Int { Int(rufus_ntfs_exists(handle, Self.normalize(path))) }
 

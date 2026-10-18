@@ -40,21 +40,23 @@ Already use [Homebrew](https://brew.sh)? Run `brew install --cask hashim1999164/
 
 1. **Plug in a USB stick.** ⚠️ Everything on it will be erased — copy your files off first.
 2. **Choose what to put on it:** drag a file (`.iso`, `.dmg`, macOS installer…) onto the window,
-   or click **Download** to get Windows, macOS or Linux.
-3. **Click START**, confirm, and type your Mac password. Wait until it says **Ready**.
+   or click **macOS**, **Windows** or **Linux** to download it.
+3. **Pick your USB drive and click Create USB**, confirm, and type your Mac password.
+   Wait until it says **Your USB drive is ready**.
 
-That's it — the right settings are chosen automatically.
+That's it — the right settings are chosen automatically. (Want every option, like Rufus? Switch to **Advanced** at the
+top of the window.)
 
 ### Making a macOS installer
 
-Click **Download › macOS…**, then **Get Installer** next to the version you want.
-The app downloads it from Apple, installs it into Applications, checks it, and selects it for you. Then click **START**.
+Click **macOS**, then **Get Installer** next to the version you want.
+The app downloads it from Apple, installs it into Applications, checks it, and selects it for you. Then click **Create USB**.
 
 ### Making a Windows installer
 
-Click **Download › Windows…**, choose the version and your language, click **Get download links**, then
-**Download & Use**. When it's done, click **START**. For Windows 11, the options to skip the TPM / Secure Boot check
-and the Microsoft account sign-in are already turned on.
+Click **Windows**, choose the version and your language, click **Get download links**, then **Download & Use**.
+When it's done, pick your USB drive and click **Create USB**. The options to skip the TPM / Secure Boot check and the
+Microsoft account sign-in are already turned on.
 
 ## Questions
 
@@ -71,6 +73,10 @@ No. Your Mac's own disks are never shown — only USB sticks and SD cards.
 On a PC: plug it in, turn the PC on and press the boot menu key (often **F12**, **F11**, **F8** or **Esc**), then pick
 the USB stick. On a Mac (macOS installer): hold the **power button** (Apple silicon) or **Option ⌥** (Intel) while it
 starts, then pick the installer.
+
+**macOS installer: "The bless of the installer disk failed"?**
+macOS is protecting the USB drive. Open **System Settings › Privacy & Security › Full Disk Access**, turn on
+RufusAdvanced, reopen it and try again.
 
 **Something went wrong?**
 Click **Log** at the bottom of the window, copy it, and

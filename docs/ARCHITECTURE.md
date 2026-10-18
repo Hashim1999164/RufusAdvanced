@@ -68,10 +68,14 @@ OS specific setup (`WindowsSetup`, `LinuxSetup`, `SyslinuxInstaller`) and finall
 macOS can't write NTFS, so `Sources/CNTFS` vendors libntfs-3g and mkntfs (see `Sources/CNTFS/README-ntfs-3g.txt` for
 the exact changes). `rufus_ntfs.c` replaces ntfs-3g's `unix_io` device with one that works on an already open
 descriptor and a byte range (`rufusfd:<fd>:<offset>:<size>:<sector size>`), so it works on raw character devices,
-authopen descriptors and disk images alike. I/O smaller than 128 KB goes through a write-back page cache (4 KB pages,
-64 KB read-ahead, flushed sorted and coalesced on sync/close or past 128 MB dirty): USB flash drives are very slow at
-the thousands of small synchronous metadata writes libntfs-3g issues. File data is allocated in one piece
-(`ntfs_attr_truncate_solid`, falling back to on-demand allocation) and written directly in 8 MB chunks.
+authopen descriptors and disk images alike. Metadata I/O (file records, directory indexes, bitmaps) goes through a
+write-back page cache (4 KB pages, 64 KB read-ahead, flushed on sync/close or past 32 MB dirty): USB flash drives are
+very slow at the thousands of small synchronous writes libntfs-3g issues (a cheap stick needs ~250 ms per scattered
+4 KB write). Flushes are sorted and merge dirty pages up to 256 KB apart into one request of up to 2 MB. File data
+never waits in the cache: it is allocated in one piece (`ntfs_attr_truncate_solid`, falling back to on-demand
+allocation) and written directly in 8 MB chunks, with partial first/last pages completed in memory so each piece
+goes out in one request — otherwise every file's last page would end up as a scattered write in the final flush.
+Closing reports progress (`rufus_ntfs_set_flush_progress`) and the app shows a heartbeat while the drive flushes.
 mkntfs runs in-process (`mkntfs_main`).
 
 Files can't be copied through a mount, so ISO mode on NTFS uses `NTFSWriter`: everything the OS-specific setup changes

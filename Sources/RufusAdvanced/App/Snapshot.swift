@@ -21,7 +21,26 @@ enum Snapshot {
             let windows = NSApp.windows.filter { $0.isVisible }
             guard let w = title.flatMap({ t in windows.first { $0.title == t } }) ?? windows.first,
                   let frameView = w.contentView?.superview else { NSApp.terminate(nil); return }
-            if env["RUFUSADV_SNAPSHOT_VIEW"] == "macassistant" {
+            if let st = env["RUFUSADV_SNAPSHOT_STATE"] {
+                if st == "working" {
+                    model.state = .running
+                    model.progress = JobProgress(phase: "Copying files", detail: "install.wim", fraction: 0.62, overall: 0.58,
+                                                 bytesDone: 3_400_000_000, bytesTotal: 5_700_000_000, bytesPerSecond: 21_000_000)
+                } else {
+                    model.state = .succeeded
+                    model.finishedMountPoints = ["/Volumes/WIN10"]
+                }
+            }
+            if env["RUFUSADV_SNAPSHOT_VIEW"] == "simple" {
+                let content = SimpleFlowView().environmentObject(model)
+                    .frame(width: 560, height: 740)
+                    .background(Color(nsColor: .windowBackgroundColor))
+                let r = ImageRenderer(content: content)
+                r.scale = 2
+                if let img = r.nsImage, let tiff = img.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff) {
+                    try? rep.representation(using: .png, properties: [:])?.write(to: URL(fileURLWithPath: out))
+                }
+            } else if env["RUFUSADV_SNAPSHOT_VIEW"] == "macassistant" {
                 let content = MacInstallerAssistantSheet(assistant: model.macInstallers).environmentObject(model)
                     .background(Color(nsColor: .windowBackgroundColor))
                 let r = ImageRenderer(content: content)

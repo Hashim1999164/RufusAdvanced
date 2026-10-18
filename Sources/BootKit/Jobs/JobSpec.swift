@@ -44,7 +44,7 @@ public struct JobSpec: Codable, Sendable {
     public var biosDriveID: UInt8 = 0x80
     public var persistenceSize: UInt64 = 0
     public var uefiMediaValidation = false
-    public var largeWIMStrategy: LargeWIMStrategy = .ntfsUEFINTFS
+    public var largeWIMStrategy: LargeWIMStrategy = .splitWIM
     public var windows: WindowsCustomization?
     public var verifyWrite = false
     public var ejectWhenDone = false

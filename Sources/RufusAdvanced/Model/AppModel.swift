@@ -12,6 +12,8 @@ final class AppModel: ObservableObject {
         let id = UUID()
         var title: String
         var message: String
+        /// Optional "Open Settings" destination (e.g. Full Disk Access).
+        var settingsURL: URL? = nil
     }
 
     // MARK: Devices
@@ -39,7 +41,7 @@ final class AppModel: ObservableObject {
     @Published var oldBIOSFixes = false
     @Published var uefiValidation = false
     @Published var persistenceMB: Double = 0
-    @Published var largeWIMStrategy: LargeWIMStrategy = .ntfsUEFINTFS
+    @Published var largeWIMStrategy: LargeWIMStrategy = .splitWIM
     @Published var verifyWrite = false
     @Published var freeDOSKeyboard = FormatWriter.defaultKeyboard()
     @Published var windows: WindowsCustomization = AppSettings.shared.windowsCustomization
@@ -68,6 +70,8 @@ final class AppModel: ObservableObject {
     let settings = AppSettings.shared
     private var watcher: DiskWatcher?
     private var runner: PrivilegedRunner?
+    /// Clone of the source made for a root job (removed when the job ends).
+    private var stagedForRoot: String?
     private var activity: NSObjectProtocol?
     private var jobStarted = Date()
 
@@ -254,9 +258,10 @@ final class AppModel: ObservableObject {
         return nil
     }
 
-    func requestStart() {
+    /// `skipCustomization`: Simple mode shows the Windows options inline instead of the sheet.
+    func requestStart(skipCustomization: Bool = false) {
         if let r = startDisabledReason { alert = Alert(title: "Cannot start", message: r); return }
-        if image?.family == .windows && bootSelection == .image && writeMode == .iso && settings.askWindowsCustomization {
+        if !skipCustomization && image?.family == .windows && bootSelection == .image && writeMode == .iso && settings.askWindowsCustomization {
             showWindowsSheet = true
         } else {
             showConfirm = true
@@ -337,7 +342,15 @@ final class AppModel: ObservableObject {
         }
     }
 
-    private func launch(_ spec: JobSpec) {
+    private func launch(_ original: JobSpec) {
+        var spec = original
+        // Root jobs (macOS installers) may not read ~/Downloads, ~/Desktop or ~/Documents:
+        // hand them an instant APFS clone from a folder macOS doesn't protect.
+        if spec.bootSelection == .macInstaller, let path = spec.imagePath, let staged = Privacy.stageForRootJob(path) {
+            spec.imagePath = staged
+            spec.image?.path = staged
+            stagedForRoot = staged
+        }
         finishedMountPoints = []
         driveEjected = false
         let runner = PrivilegedRunner { [weak self] event in self?.handle(event) }
@@ -356,6 +369,7 @@ final class AppModel: ObservableObject {
     }
 
     private func launchFailed(_ error: Error) {
+        removeStagedSource()
         endActivity()
         runner = nil
         state = .ready
@@ -389,6 +403,7 @@ final class AppModel: ObservableObject {
             driveEjected = ejected
             finishedMountPoints = mountPoints
         case .finished(let ok, let err, let n):
+            removeStagedSource()
             endActivity()
             NSApp.dockTile.badgeLabel = nil
             notices = n
@@ -408,12 +423,18 @@ final class AppModel: ObservableObject {
                 NSSound(named: "Basso")?.play()
                 // The status bar has room for one line: show the whole explanation and keep the log open.
                 settings.showLogPane = true
-                alert = Alert(title: "The operation failed", message: message + "\n\nThe log below (and in ~/Library/Logs/RufusAdvanced) has the details.")
+                alert = Alert(title: "The operation failed", message: message + "\n\nThe log below (and in ~/Library/Logs/RufusAdvanced) has the details.",
+                              settingsURL: message.contains("Full Disk Access") ? Privacy.fullDiskAccessSettingsURL : nil)
             }
             logFile.flush()
             NSApp.requestUserAttention(.informationalRequest)
             refreshDisks()
         }
+    }
+
+    private func removeStagedSource() {
+        if let s = stagedForRoot { Privacy.removeStaged(s) }
+        stagedForRoot = nil
     }
 
     private func endActivity() {
@@ -475,6 +496,24 @@ final class AppModel: ObservableObject {
         if p.runModal() == .OK, let u = p.url {
             do { try logText.write(to: u, atomically: true, encoding: .utf8) }
             catch { alert = Alert(title: "Could not save the log", message: error.localizedDescription) }
+        }
+    }
+
+    /// Eject the drive that was just written (finish screen).
+    func ejectFinishedDrive() {
+        guard let disk = selectedDisk?.identifier else { return }
+        Task.detached {
+            let ok = DiskUtil.eject(disk)
+            await MainActor.run {
+                if ok {
+                    self.driveEjected = true
+                    self.finishedMountPoints = []
+                    logInfo("Ejected \(disk): it is safe to remove the drive.")
+                } else {
+                    self.alert = Alert(title: "Could not eject", message: "Close any window or app using the drive, then try again (or eject it from Finder).")
+                }
+                self.refreshDisks()
+            }
         }
     }
 

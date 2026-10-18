@@ -192,7 +192,10 @@ public enum MacInstallerWriter {
             exe = "/usr/bin/arch"
         }
         var stage = ""
+        var blockedByPrivacy = false
+        do {
         try Shell.check(exe, finalArgs, cancel: ctx.cancel) { line in
+            if line.contains("cookie write failed") || line.contains("bless of the installer disk failed") { blockedByPrivacy = true }
             logDebug(line)
             let l = line.trimmingCharacters(in: .whitespaces)
             if l.hasPrefix("Erasing disk") { stage = "Erasing disk" }
@@ -208,6 +211,18 @@ public enum MacInstallerWriter {
                 r.update(fraction: nil, detail: stage)
             }
             if l.contains("Install media now available") { logInfo(l) }
+        }
+        } catch BootKitError.commandFailed(let tool, let code, let output) {
+            if blockedByPrivacy || output.contains("cookie write failed") || output.contains("bless of the installer disk failed") {
+                throw BootKitError.generic("""
+                    macOS didn't let createinstallmedia write to the USB drive ("IA app name cookie write failed", \
+                    "The bless of the installer disk failed"). This is macOS privacy protection, not a problem with the drive.
+
+                    To fix it: open System Settings › Privacy & Security › Full Disk Access, turn on RufusAdvanced \
+                    (use + to add it from Applications if it isn't listed), quit and reopen RufusAdvanced, then try again.
+                    """)
+            }
+            throw BootKitError.commandFailed(tool, code, output)
         }
     }
 

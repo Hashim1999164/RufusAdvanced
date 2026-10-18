@@ -140,6 +140,64 @@ public final class NTFSWriter {
 
     // MARK: Write
 
+    // MARK: Finalize
+
+    /// Close the volume and flush the drive with visible progress: writing back cached metadata is
+    /// measured in bytes, flushing the drive's own cache is shown with the elapsed time (both can
+    /// take minutes on slow USB drives).
+    public static func finalize(_ vol: NTFSVolume, device dev: RawDevice, reporter r: JobReporter) throws {
+        final class State: @unchecked Sendable {
+            let lock = NSLock()
+            var text = "Writing NTFS metadata"
+            var done: UInt64 = 0, total: UInt64 = 0
+            var loggedMetadata = false, loggedDevice = false
+        }
+        let st = State()
+        let start = Date()
+        r.begin("Finalizing", detail: "Writing NTFS metadata")
+        logInfo("Finalizing NTFS: writing the remaining metadata, then flushing the drive (slow USB drives can take a few minutes)")
+        let timer = DispatchSource.makeTimerSource(queue: .global(qos: .utility))
+        var lastLog = start
+        timer.schedule(deadline: .now() + 1, repeating: 1)
+        timer.setEventHandler {
+            st.lock.lock(); let text = st.text, done = st.done, total = st.total; st.lock.unlock()
+            let elapsed = Units.duration(Date().timeIntervalSince(start))
+            if total > 0 {
+                r.update(fraction: Double(done) / Double(total), detail: "\(text) · \(elapsed)", bytesDone: done, bytesTotal: total, force: true)
+            } else {
+                r.update(fraction: nil, detail: "\(text) · \(elapsed)", force: true)
+            }
+            if Date().timeIntervalSince(lastLog) >= 10 {
+                lastLog = Date()
+                logDebug("  Still finalizing: \(text)\(total > 0 ? " (\(Units.human(done)) of \(Units.human(total)))" : "") — \(elapsed) so far")
+            }
+        }
+        timer.resume()
+        defer { timer.cancel() }
+
+        try vol.close { stage, done, total in
+            st.lock.lock()
+            var line: String?
+            if stage == 0 {
+                st.text = "Writing NTFS metadata"
+                st.done = done; st.total = total
+                if !st.loggedMetadata { st.loggedMetadata = true; line = "Writing \(Units.human(total)) of cached NTFS metadata to the drive" }
+            } else {
+                st.text = "Flushing the drive's write cache"
+                st.done = 0; st.total = 0
+                if !st.loggedDevice { st.loggedDevice = true; line = "Flushing the drive's write cache (the drive confirms everything is stored)" }
+            }
+            st.lock.unlock()
+            if let line { logInfo(line) }
+        }
+        st.lock.lock(); st.text = "Flushing the drive's write cache"; st.done = 0; st.total = 0; st.lock.unlock()
+        dev.sync()
+        logInfo("NTFS volume finalized in \(Units.duration(Date().timeIntervalSince(start)))")
+    }
+
+    /// Files below this size are written before the large ones (see `write`).
+    static let smallFileLimit: UInt64 = 4 * Units.MB
+
     /// FAT/NTFS-safe name for Windows (no * ? : " < > | and no trailing dot or space).
     static func windowsSafe(_ rel: String) -> String {
         let bad = CharacterSet(charactersIn: "\"*:<>?\\|").union(.controlCharacters)
@@ -152,7 +210,16 @@ public final class NTFSWriter {
 
     /// Write the merged view to the NTFS volume.
     public func write(to vol: NTFSVolume, reporter: JobReporter, cancel: CancellationToken) throws {
-        let list = entries()
+        var list = entries()
+        // Small files first (directories are already first): NTFS allocates space in write order, so
+        // this keeps the many small files next to each other instead of scattered between the large
+        // ones. Flash drives write neighbouring data far faster than scattered small pieces.
+        // RUFUS_NTFS_PATH_ORDER=1 keeps plain path order (measurements).
+        if ProcessInfo.processInfo.environment["RUFUS_NTFS_PATH_ORDER"] == nil {
+            let small = Self.smallFileLimit
+            list = list.filter(\.isDirectory) + list.filter { !$0.isDirectory && $0.size < small }
+                + list.filter { !$0.isDirectory && $0.size >= small }
+        }
         let total = list.filter { !$0.isDirectory }.reduce(0) { $0 + $1.size }
         reporter.begin("Copying files", detail: "NTFS (embedded ntfs-3g)", total: total)
         var done: UInt64 = 0

@@ -168,9 +168,7 @@ public enum ISOWriter {
             try? vol.close()
             throw error
         }
-        r.begin("Finalizing", detail: "Writing NTFS metadata")
-        try vol.close()
-        dev.sync()
+        try NTFSWriter.finalize(vol, device: dev, reporter: r)
     }
 
     /// Choose ldlinux.sys / ldlinux.bss matching the ISO's Syslinux version.

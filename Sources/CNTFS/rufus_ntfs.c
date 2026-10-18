@@ -47,12 +47,15 @@
 #define RFD_LARGE_IO    (128 * 1024)      /* at least this: direct I/O */
 #define RFD_READAHEAD   16                /* pages loaded together on a miss (64 KB) */
 #define RFD_MAX_PAGES   65536             /* 256 MB of cache, then flush and drop */
-#define RFD_MAX_DIRTY   32768             /* 128 MB dirty, then flush */
+#define RFD_MAX_DIRTY   8192              /* 32 MB dirty, then flush (keeps the final flush short) */
 #define RFD_BUCKETS     65536             /* hash buckets (power of two) */
-#define RFD_FLUSH_RUN   256               /* pages per coalesced write (1 MB) */
+#define RFD_SPAN_PAGES  512               /* longest merged write-back span (2 MB) */
+#define RFD_GAP_PAGES   64                /* merge dirty pages up to 256 KB apart */
 
 typedef struct {
     u64 reads, writes, small_writes, read_bytes, write_bytes, cache_hits, flushes;
+    u64 random_writes;          /* writes that don't continue the previous one (costly on flash) */
+    s64 last_write_end;
 } rfd_stats_t;
 
 typedef struct rfd_page {
@@ -73,6 +76,8 @@ typedef struct {
     rfd_page_t **buckets;
     size_t npages, ndirty;
     rfd_stats_t st;            /* device level I/O */
+    rufus_ntfs_flush_progress flush_cb;   /* progress while writing back / syncing */
+    void *flush_ctx;
 } rfd_t;
 
 #define RFD(dev) ((rfd_t *)(dev)->d_private)
@@ -107,6 +112,8 @@ static s64 dev_read(rfd_t *p, s64 offset, void *buf, s64 count) {
 static s64 dev_write(rfd_t *p, s64 offset, const void *buf, s64 count) {
     p->st.writes++; p->st.write_bytes += (u64)count;
     if (count < 65536) p->st.small_writes++;
+    if (offset != p->st.last_write_end) p->st.random_writes++;
+    p->st.last_write_end = offset + count;
     return full_pwrite(p->fd, buf, count, p->base + offset);
 }
 
@@ -159,6 +166,10 @@ static int page_cmp(const void *a, const void *b) {
 }
 
 /* Write every dirty page, sorted and coalesced into runs of consecutive pages. */
+/* Write every dirty page, sorted. Flash drives pay roughly the same for one small random write as
+ * for writing a whole megabyte sequentially, so nearby dirty pages are merged into one span (up to
+ * RFD_SPAN_PAGES): the clean pages in between come from the cache or are read from the device first,
+ * and the span is written in a single request. */
 static int cache_flush(rfd_t *p) {
     if (!p->buckets || p->ndirty == 0) return 0;
     rfd_page_t **list = malloc(p->ndirty * sizeof(*list));
@@ -168,22 +179,40 @@ static int cache_flush(rfd_t *p) {
         for (rfd_page_t *pg = p->buckets[b]; pg; pg = pg->next)
             if (pg->dirty && n < p->ndirty) list[n++] = pg;
     qsort(list, n, sizeof(*list), page_cmp);
+    const char *dump = getenv("RUFUS_NTFS_DUMPDIRTY");      /* development: dirty page layout */
+    if (dump) {
+        FILE *f = fopen(dump, "a");
+        if (f) { for (size_t k = 0; k < n; k++) fprintf(f, "%lld\n", (long long)list[k]->idx); fprintf(f, "--\n"); fclose(f); }
+    }
     char *run = NULL;
-    if (posix_memalign((void **)&run, 4096, (size_t)(p->psize * RFD_FLUSH_RUN)) != 0) { free(list); errno = ENOMEM; return -1; }
+    if (posix_memalign((void **)&run, 4096, (size_t)(p->psize * RFD_SPAN_PAGES)) != 0) { free(list); errno = ENOMEM; return -1; }
     int rc = 0;
     size_t i = 0;
+    uint64_t total = (uint64_t)n * (uint64_t)p->psize, written = 0;
+    if (p->flush_cb) p->flush_cb(p->flush_ctx, RUFUS_NTFS_FLUSH_METADATA, 0, total);
     while (i < n) {
-        size_t j = i;
-        s64 len = 0;
-        while (j < n && j - i < RFD_FLUSH_RUN && list[j]->idx == list[i]->idx + (s64)(j - i)) {
-            s64 l = page_len(p, list[j]->idx);
-            memcpy(run + len, list[j]->data, (size_t)l);
-            len += l;
+        /* Grow the span while the next dirty page is close enough and the span stays bounded. */
+        s64 first = list[i]->idx, last = first;
+        size_t j = i + 1;
+        while (j < n && list[j]->idx - last <= RFD_GAP_PAGES && list[j]->idx - first < RFD_SPAN_PAGES) {
+            last = list[j]->idx;
             j++;
         }
-        if (dev_write(p, list[i]->idx * p->psize, run, len) < 0) { rc = -1; break; }
+        s64 npages = last - first + 1;
+        s64 len = (npages - 1) * p->psize + page_len(p, last);
+        int gaps = 0;
+        for (s64 idx = first; idx <= last && !gaps; idx++) if (!page_find(p, idx)) gaps = 1;
+        /* Pages of the span that aren't cached keep their current content: read the span first. */
+        if (gaps && dev_read(p, first * p->psize, run, len) < 0) { rc = -1; break; }
+        for (s64 idx = first; idx <= last; idx++) {
+            rfd_page_t *pg = page_find(p, idx);
+            if (pg) memcpy(run + (idx - first) * p->psize, pg->data, (size_t)page_len(p, idx));
+        }
+        if (dev_write(p, first * p->psize, run, len) < 0) { rc = -1; break; }
         for (size_t k = i; k < j; k++) list[k]->dirty = 0;
         p->ndirty -= j - i;
+        written += (uint64_t)(j - i) * (uint64_t)p->psize;
+        if (p->flush_cb) p->flush_cb(p->flush_ctx, RUFUS_NTFS_FLUSH_METADATA, written, total);
         i = j;
     }
     p->st.flushes++;
@@ -280,6 +309,55 @@ static int cached_write(rfd_t *p, s64 idx, const char *buf, s64 offset, s64 coun
     return 0;
 }
 
+/* Current content of page idx (cached copy, or read from the device) into dst. */
+static int fill_page(rfd_t *p, s64 idx, char *dst) {
+    rfd_page_t *pg = page_find(p, idx);
+    if (pg) { memcpy(dst, pg->data, (size_t)page_len(p, idx)); return 0; }
+    return dev_read(p, idx * p->psize, dst, page_len(p, idx)) < 0 ? -1 : 0;
+}
+
+/* Write straight to the device, completing partial first/last pages in memory so the whole range
+ * goes out in one request (nothing of it is left in the cache), and keep cached copies coherent. */
+static s64 direct_write(rfd_t *p, const char *b, s64 offset, s64 count) {
+    s64 ps = p->psize;
+    s64 first = offset / ps, last = (offset + count - 1) / ps;
+    s64 astart = first * ps;
+    s64 aend = (last + 1) * ps < p->size ? (last + 1) * ps : p->size;
+    const char *src = b;
+    char *tmp = NULL;
+    if (offset != astart || offset + count != aend) {
+        if (posix_memalign((void **)&tmp, 4096, (size_t)(aend - astart)) != 0) { errno = ENOMEM; return -1; }
+        if (offset != astart && fill_page(p, first, tmp) < 0) { free(tmp); return -1; }
+        if (offset + count != aend && (last != first || offset == astart)
+            && fill_page(p, last, tmp + (last - first) * ps) < 0) { free(tmp); return -1; }
+        memcpy(tmp + (offset - astart), b, (size_t)count);
+        src = tmp;
+    }
+    s64 r = dev_write(p, astart, src, aend - astart);
+    if (r >= 0) {
+        for (s64 idx = first; idx <= last && p->npages; idx++) {
+            rfd_page_t *pg = page_find(p, idx);
+            if (!pg) continue;
+            memcpy(pg->data, src + (idx - first) * ps, (size_t)page_len(p, idx));
+            if (pg->dirty) { pg->dirty = 0; p->ndirty--; }
+        }
+    }
+    free(tmp);
+    return r < 0 ? -1 : count;
+}
+
+/* Set by rufus_ntfs_write_file/_data around file data writes: data never waits in the cache. */
+static int rfd_data_write = 0;
+
+/* Smallest file data write sent straight to the device. Smaller files are batched in the cache: they
+ * are allocated next to each other, so the write-back merges them into a few large requests (on a
+ * Windows 10 ISO: ~30 small writes instead of ~900). RUFUS_NTFS_DATA_DIRECT_MIN overrides it. */
+static s64 rfd_data_direct_min(rfd_t *p) {
+    static s64 v = -1;
+    if (v < 0) { const char *e = getenv("RUFUS_NTFS_DATA_DIRECT_MIN"); v = e ? atoll(e) : 0; }
+    return v > 0 ? v : (64 * 1024 > p->psize ? 64 * 1024 : p->psize);
+}
+
 static s64 rfd_pwrite(struct ntfs_device *dev, const void *buf, s64 count, s64 offset) {
     rfd_t *p = RFD(dev);
     if (NDevReadOnly(dev)) { errno = EROFS; return -1; }
@@ -289,30 +367,11 @@ static s64 rfd_pwrite(struct ntfs_device *dev, const void *buf, s64 count, s64 o
     if (count <= 0) return 0;
     NDevSetDirty(dev);
     const char *b = buf;
+    /* Large I/O, and file data of at least a page: straight to the device. File data left in the
+     * cache would end up as thousands of scattered small writes when it is flushed. */
+    if (count >= RFD_LARGE_IO || (rfd_data_write && count >= rfd_data_direct_min(p)))
+        return direct_write(p, b, offset, count);
     s64 first = offset / p->psize, last = (offset + count - 1) / p->psize;
-    if (count >= RFD_LARGE_IO) {
-        /* Whole pages go straight to the device; partial edge pages through the cache. */
-        s64 fs = (offset + p->psize - 1) / p->psize;          /* first whole page */
-        s64 le = (offset + count) / p->psize;                  /* one past the last whole page */
-        if (offset + count == p->size) le = last + 1;          /* short final page counts as whole */
-        if (fs > first && cached_write(p, first, b, offset, count) < 0) return -1;
-        if (le <= last && le >= fs && cached_write(p, last, b, offset, count) < 0) return -1;
-        if (le > fs) {
-            s64 ds = fs * p->psize;
-            s64 de = le * p->psize < p->size ? le * p->psize : p->size;
-            if (dev_write(p, ds, b + (ds - offset), de - ds) < 0) return -1;
-            for (s64 idx = fs; idx < le && p->npages; idx++) {
-                rfd_page_t *pg = page_find(p, idx);
-                if (!pg) continue;
-                memcpy(pg->data, b + (idx * p->psize - offset), (size_t)page_len(p, idx));
-                if (pg->dirty) { pg->dirty = 0; p->ndirty--; }
-            }
-        } else if (fs > le) {
-            /* No whole page at all (spans two partial pages only). */
-            if (last != first && cached_write(p, last, b, offset, count) < 0) return -1;
-        }
-        return count;
-    }
     for (s64 idx = first; idx <= last; idx++)
         if (cached_write(p, idx, b, offset, count) < 0) return -1;
     if (p->ndirty >= RFD_MAX_DIRTY && cache_flush(p) < 0) return -1;
@@ -356,6 +415,7 @@ static int rfd_sync(struct ntfs_device *dev) {
     rfd_t *p = RFD(dev);
     if (!NDevReadOnly(dev)) {
         if (cache_flush(p) < 0) return -1;
+        if (p->flush_cb) p->flush_cb(p->flush_ctx, RUFUS_NTFS_FLUSH_DEVICE, 0, 0);
         struct stat st;
         if (fstat(p->fd, &st) == 0 && S_ISREG(st.st_mode)) fsync(p->fd);
         else ioctl(p->fd, DKIOCSYNCHRONIZECACHE);
@@ -370,11 +430,11 @@ static int rfd_close(struct ntfs_device *dev) {
     int rc = 0;
     if (NDevDirty(dev) || p->ndirty) rc = rfd_sync(dev);
     if (getenv("RUFUS_NTFS_IOSTATS"))
-        fprintf(stderr, "ntfs-io: %llu device reads (%llu MB), %llu device writes (%llu MB), %llu small writes (<64 KB), %llu cache hits, %llu flushes\n",
+        fprintf(stderr, "ntfs-io: %llu device reads (%llu MB), %llu device writes (%llu MB), %llu small writes (<64 KB), %llu non-sequential writes, %llu cache hits, %llu flushes\n",
                 (unsigned long long)p->st.reads, (unsigned long long)(p->st.read_bytes >> 20),
                 (unsigned long long)p->st.writes, (unsigned long long)(p->st.write_bytes >> 20),
-                (unsigned long long)p->st.small_writes, (unsigned long long)p->st.cache_hits,
-                (unsigned long long)p->st.flushes);
+                (unsigned long long)p->st.small_writes, (unsigned long long)p->st.random_writes,
+                (unsigned long long)p->st.cache_hits, (unsigned long long)p->st.flushes);
     cache_drop(p);
     free(p->buckets);
     if (p->owned) close(p->fd);
@@ -672,7 +732,9 @@ int rufus_ntfs_write_file(rufus_ntfs *r, const char *path, int srcfd, uint64_t s
         ssize_t got = pread(srcfd, buf, want, (off_t)done);
         if (got < 0 && errno == EINTR) continue;
         if (got <= 0) { seterr(err, errlen, "read error on the source of %s: %s", path, got < 0 ? strerror(errno) : "unexpected end of file"); rc = -1; break; }
+        rfd_data_write = 1;
         s64 w = ntfs_attr_pwrite(na, (s64)done, (s64)got, buf);
+        rfd_data_write = 0;
         if (w != got) { seterr(err, errlen, "write error on %s: %s", path, strerror(errno)); rc = -1; break; }
         done += (uint64_t)got;
         if (progress && progress(ctx, (uint64_t)got)) { seterr(err, errlen, "cancelled"); rc = -2; break; }
@@ -687,7 +749,10 @@ int rufus_ntfs_write_data(rufus_ntfs *r, const char *path, const void *data, uin
     ntfs_attr *na = create_file(r, path, &ni, err, errlen);
     if (!na) return -1;
     int rc = 0;
-    if (size > 0 && ntfs_attr_pwrite(na, 0, (s64)size, data) != (s64)size) {
+    rfd_data_write = 1;
+    s64 w = size > 0 ? ntfs_attr_pwrite(na, 0, (s64)size, data) : 0;
+    rfd_data_write = 0;
+    if (size > 0 && w != (s64)size) {
         seterr(err, errlen, "write error on %s: %s", path, strerror(errno));
         rc = -1;
     }
@@ -731,6 +796,13 @@ void rufus_ntfs_space(rufus_ntfs *r, uint64_t *free_bytes, uint64_t *total_bytes
     if (ntfs_volume_get_free_space(vol) == 0 && free_bytes)
         *free_bytes = (uint64_t)vol->free_clusters * vol->cluster_size;
     if (total_bytes) *total_bytes = (uint64_t)vol->nr_clusters * vol->cluster_size;
+}
+
+void rufus_ntfs_set_flush_progress(rufus_ntfs *r, rufus_ntfs_flush_progress cb, void *ctx) {
+    if (!r || !r->vol || !r->vol->dev || !r->vol->dev->d_private) return;
+    rfd_t *p = RFD(r->vol->dev);
+    p->flush_cb = cb;
+    p->flush_ctx = ctx;
 }
 
 int rufus_ntfs_close(rufus_ntfs *r, char *err, size_t errlen) {

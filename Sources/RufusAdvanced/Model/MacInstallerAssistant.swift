@@ -35,6 +35,7 @@ final class MacInstallerAssistant: ObservableObject {
     /// Waiting for Apple's Installer app (opened by the user) to put the installer in Applications.
     @Published private(set) var watchingInstallerApp = false
     @Published var showSheet = false
+    private var staged: String?
 
     weak var model: AppModel?
     private var runner: PrivilegedRunner?
@@ -127,7 +128,9 @@ final class MacInstallerAssistant: ObservableObject {
         progress = JobProgress(phase: "Waiting for the administrator password")
         var spec = JobSpec(disk: "", diskSize: 0, diskMediaName: "")
         spec.operation = .installMacPackage
-        spec.imagePath = pkg
+        // The administrator job may not read ~/Downloads: give it an instant APFS clone instead.
+        staged = Privacy.stageForRootJob(pkg)
+        spec.imagePath = staged ?? pkg
         let r = PrivilegedRunner { [weak self] e in self?.handle(e) }
         runner = r
         let modelRef = model
@@ -138,6 +141,7 @@ final class MacInstallerAssistant: ObservableObject {
             } catch {
                 await MainActor.run {
                     self.runner = nil
+                    if let s = self.staged { Privacy.removeStaged(s); self.staged = nil }
                     if case PrivilegedRunner.RunError.authorizationCancelled = error {
                         self.phase = .idle
                         self.progress = nil
@@ -161,6 +165,7 @@ final class MacInstallerAssistant: ObservableObject {
         case .finished(let ok, let err, let notices):
             runner = nil
             progress = nil
+            if let s = staged { Privacy.removeStaged(s); staged = nil }
             if ok, let app = MacInstallerLibrary.installedPath(fromNotices: notices) {
                 finishInstall(app)
             } else if (err ?? "").lowercased().contains("cancel") {

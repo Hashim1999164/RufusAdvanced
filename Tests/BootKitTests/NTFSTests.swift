@@ -215,8 +215,16 @@ import CryptoKit
         let report = try ImageInspector.inspect(path: path)
         #expect(report.family == .windows && report.has4GBFile)
         let rec = MediaPlanner.recommend(image: report, disk: nil)
-        #expect(rec.fileSystem == .ntfs && rec.largeWIMStrategy == .ntfsUEFINTFS)
-        let td = try TestDisk(sizeMB: Int((report.projectedSize + 600 * Units.MB) / Units.MB))
+        // FAT32 + split install.wim is the default when wimlib is installed, NTFS otherwise.
+        if ExternalTool.wimlib.isAvailable {
+            #expect(rec.fileSystem == .fat32 && rec.largeWIMStrategy == .splitWIM)
+        } else {
+            #expect(rec.fileSystem == .ntfs && rec.largeWIMStrategy == .ntfsUEFINTFS)
+        }
+        // WIN_DISK_MB: simulate a real stick's size (sparse image).
+        let sizeMB = ProcessInfo.processInfo.environment["WIN_DISK_MB"].flatMap(Int.init)
+            ?? Int((report.projectedSize + 600 * Units.MB) / Units.MB)
+        let td = try TestDisk(sizeMB: sizeMB)
         defer { td.detach() }
         var s = try baseSpec(td)
         s.imagePath = path
@@ -224,8 +232,8 @@ import CryptoKit
         s.writeMode = rec.writeMode
         s.partitionScheme = rec.scheme
         s.targetSystem = rec.target
-        s.fileSystem = rec.fileSystem
-        s.largeWIMStrategy = rec.largeWIMStrategy
+        s.fileSystem = .ntfs                      // this test is about NTFS
+        s.largeWIMStrategy = .ntfsUEFINTFS
         s.label = rec.label
         s.uefiMediaValidation = true
         s.windows = WindowsCustomization()

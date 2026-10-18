@@ -52,6 +52,12 @@ int rufus_ntfs_set_label(rufus_ntfs *vol, const char *label, char *err, size_t e
 void rufus_ntfs_space(rufus_ntfs *vol, uint64_t *free_bytes, uint64_t *total_bytes);
 
 /// Flush and release the volume. Returns 0 on success.
+/* Progress while cached metadata is written back (done/total bytes) and while the drive's own
+ * write cache is flushed (no byte counts). Called on the thread doing the I/O. */
+enum { RUFUS_NTFS_FLUSH_METADATA = 0, RUFUS_NTFS_FLUSH_DEVICE = 1 };
+typedef void (*rufus_ntfs_flush_progress)(void *ctx, int stage, uint64_t done, uint64_t total);
+void rufus_ntfs_set_flush_progress(rufus_ntfs *vol, rufus_ntfs_flush_progress cb, void *ctx);
+
 int rufus_ntfs_close(rufus_ntfs *vol, char *err, size_t errlen);
 
 #endif

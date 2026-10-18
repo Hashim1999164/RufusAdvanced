@@ -5,6 +5,32 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-10-18
+
+### Added
+- **Simple mode (new default):** a guided, animated flow — choose a system, choose the USB drive, create, done — with
+  the operating system's logo detected and fetched automatically (macOS installers show their own icon), a progress
+  ring, live stages and a finish screen with Show in Finder / Eject. Every Rufus option is still one click away in
+  **Advanced** mode (toolbar switch).
+- **NTFS "Finalizing: Writing NTFS metadata" took up to 15 minutes on slow USB drives** with no sign of life. Measured
+  on a real 64 GB stick with a Windows 10 ISO: the final step went from 15:34 to 0:19, and it now shows progress (MB
+  written, then the drive's own cache flush with the elapsed time) and logs each step.
+- **Faster NTFS writes on USB flash drives.** ntfs-3g left a 16 MB gap after every file, scattering a Windows ISO over
+  ~15 GB of the drive; files are now laid out next to each other, small files are batched, and each large file goes out
+  in whole requests. Copying a Windows 10 ISO needs ~150 non-sequential writes instead of ~1,300 (cheap sticks spend
+  up to a second on each).
+
+### Changed
+- Windows images with an install.wim larger than 4 GB default to **FAT32 + split install.wim** again when wimlib is
+  installed (boots everywhere). NTFS + UEFI:NTFS stays available and is used when wimlib is missing.
+
+### Fixed
+- Installing a downloaded macOS package failed with "Could not open package": the administrator job may not read
+  ~/Downloads. It now gets an instant APFS copy from a folder macOS doesn't protect (no extra disk space).
+- createinstallmedia "IA app name cookie write failed / The bless of the installer disk failed" (exit code 250): macOS
+  privacy protection blocked writing to the USB drive. RufusAdvanced now explains the fix (Full Disk Access) with an
+  **Open Settings** button, recommends it up front for macOS installers, and logs which app macOS holds responsible.
+
 ## [1.1.2] - 2026-10-18
 
 ### Fixed
